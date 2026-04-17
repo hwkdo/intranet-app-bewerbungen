@@ -1,9 +1,14 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Hwkdo\IntranetAppBewerbungen\Console\Commands;
 
 use Hwkdo\HwkAdminLaravel\HwkAdminService;
 use Hwkdo\IntranetAppBewerbungen\Ai\Agents\BewerbungsAgent;
+use Hwkdo\IntranetAppBewerbungen\Data\AppSettings;
+use Hwkdo\IntranetAppBewerbungen\Enums\BewerbungenAuswertungAiProvider;
+use Hwkdo\IntranetAppBewerbungen\Models\IntranetAppBewerbungenSettings;
 use Hwkdo\IntranetAppBewerbungen\Support\ExtraktionsTextBewertung;
 use Hwkdo\IntranetAppBewerbungen\Support\ExtraktionsTextValidator;
 use Hwkdo\MsGraphLaravel\Interfaces\MsGraphShareServiceInterface;
@@ -26,7 +31,7 @@ class BewerbungenAuswertenAiCommand extends Command
                             {--modell= : KI-Modell (überschreibt Standard)}
                             {--ohne-zwischenspeicher : Dateien nicht aus dem lokalen Download-Cache laden (Download erfolgt trotzdem und aktualisiert den Cache)}';
 
-    protected $description = 'Wertet Bewerbungen mit laravel/ai (Ollama/OpenWebUI) aus und erstellt CSV/Excel-Ausgabe.';
+    protected $description = 'Wertet Bewerbungen mit laravel/ai (Open Web UI/Ollama oder Langdock laut App-Einstellungen) aus und erstellt CSV/Excel-Ausgabe.';
 
     /** @var string[] */
     private const ERLAUBTE_ENDUNGEN = ['pdf', 'docx', 'doc', 'txt'];
@@ -89,13 +94,17 @@ class BewerbungenAuswertenAiCommand extends Command
         File::ensureDirectoryExists($this->downloadCacheVerzeichnis());
 
         $modell = $this->option('modell') ?: null;
+        $appSettings = IntranetAppBewerbungenSettings::resolvedAppSettings();
+        $kiProvider = $appSettings->bewerbungenAuswertungAiProvider;
+        $kiProviderLabel = BewerbungenAuswertungAiProvider::options()[$kiProvider->value];
         $basisname = $this->option('ausgabe') ?? 'bewerbungen_auswertung_ai_'.now()->format('Y-m-d_His');
         $csvPfad = $basisname.'.csv';
         $xlsxPfad = $basisname.'.xlsx';
 
         $this->info('=== Bewerbungen Auswertung (laravel/ai) ===');
         $this->info('Verarbeite '.count($bewerbungen).' Bewerbung(en)');
-        $this->info('Modell: '.($modell ?? 'Standard (OpenWebUI)'));
+        $this->info('KI-Provider: '.$kiProviderLabel.' ('.$kiProvider->value.')');
+        $this->info('Modell: '.($modell ?? 'Standard (je nach Provider)'));
         $this->info('Download-Zwischenspeicher: '.$this->downloadCacheVerzeichnis());
         $this->newLine();
 
@@ -108,7 +117,7 @@ class BewerbungenAuswertenAiCommand extends Command
             $this->statusZeile("<fg=cyan>[{$aktuell}/{$gesamtAnzahl}]</> Bewerbung <fg=yellow>ID {$id}</> – Start");
 
             try {
-                $ergebnis = $this->verarbeiteBewerbung((string) $id, $links, $modell);
+                $ergebnis = $this->verarbeiteBewerbung((string) $id, $links, $modell, $appSettings);
                 $ergebnis['id'] = $id;
                 $ergebnis['bewerbung_ro'] = $links['bewerbung_ro'] ?? '';
                 $ergebnis['anhang_ro'] = $links['anhang_ro'] ?? '';
@@ -162,7 +171,7 @@ class BewerbungenAuswertenAiCommand extends Command
      * @param  array{bewerbung_ro: string, anhang_ro?: string}  $links
      * @return array<string, mixed>
      */
-    private function verarbeiteBewerbung(string $id, array $links, ?string $modell): array
+    private function verarbeiteBewerbung(string $id, array $links, ?string $modell, AppSettings $appSettings): array
     {
         $this->statusZeile('  <fg=blue>→</> Schritt 1/4: Warte auf API – Bewerbungsordner (Graph) …');
         $bewerbungDateien = $this->shareService->getSharedFolderContents($links['bewerbung_ro']);
@@ -195,7 +204,7 @@ class BewerbungenAuswertenAiCommand extends Command
 
         $this->statusZeile('  <fg=blue>→</> Schritt 4/4: Warte auf KI-Antwort (BewerbungsAgent) mit '.count($alleTexte).' Dokument(en) …');
 
-        $ergebnis = $this->auswertungMitKi($alleTexte, $anhangNamen, $modell);
+        $ergebnis = $this->auswertungMitKi($alleTexte, $anhangNamen, $modell, $appSettings);
         $ergebnis['verarbeitete_zeugnisse'] = $ergebnis['verarbeitete_zeugnisse'] ?? $anhangNamen;
 
         $this->statusZeile('  <fg=green>  </> KI-Antwort erhalten.');
@@ -420,14 +429,23 @@ class BewerbungenAuswertenAiCommand extends Command
      * @param  string[]  $anhangNamen
      * @return array<string, mixed>
      */
-    private function auswertungMitKi(array $texte, array $anhangNamen, ?string $modell): array
+    private function auswertungMitKi(array $texte, array $anhangNamen, ?string $modell, AppSettings $appSettings): array
     {
+        $kiProvider = $appSettings->bewerbungenAuswertungAiProvider;
+
+        if ($kiProvider === BewerbungenAuswertungAiProvider::Langdock
+            && trim((string) config('services.langdock.api_key', '')) === '') {
+            throw new \Exception('Langdock ist in den App-Einstellungen gewählt, aber LANGDOCK_API_KEY (services.langdock.api_key) fehlt.');
+        }
+
         $prompt = $this->erstellePrompt($texte, $anhangNamen);
 
         $agent = BewerbungsAgent::make();
 
         $response = $agent->prompt(
             prompt: $prompt,
+            attachments: [],
+            provider: $kiProvider->value,
             model: $modell,
         );
 
