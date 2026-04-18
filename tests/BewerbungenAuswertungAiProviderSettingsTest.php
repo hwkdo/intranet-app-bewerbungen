@@ -13,6 +13,23 @@ it('defaults app settings to openwebui provider', function () {
     expect($settings->bewerbungenAuswertungAiProvider)->toBe(BewerbungenAuswertungAiProvider::OpenWebUi);
 });
 
+it('defaults auswertung model fields to empty strings', function () {
+    $settings = new AppSettings;
+
+    expect($settings->bewerbungenAuswertungModelOpenWebUi)->toBe('')
+        ->and($settings->bewerbungenAuswertungModelLangdock)->toBe('');
+});
+
+it('hydrates auswertung model fields from stored values', function () {
+    $settings = AppSettings::from([
+        'bewerbungenAuswertungModelOpenWebUi' => 'gpt-oss:20b',
+        'bewerbungenAuswertungModelLangdock' => 'gpt-4o-mini',
+    ]);
+
+    expect($settings->bewerbungenAuswertungModelOpenWebUi)->toBe('gpt-oss:20b')
+        ->and($settings->bewerbungenAuswertungModelLangdock)->toBe('gpt-4o-mini');
+});
+
 it('maps ai provider enum values to laravel ai provider keys', function () {
     expect(BewerbungenAuswertungAiProvider::OpenWebUi->value)->toBe('openwebui')
         ->and(BewerbungenAuswertungAiProvider::Langdock->value)->toBe('langdock');

@@ -28,7 +28,7 @@ class BewerbungenAuswertenAiCommand extends Command
                             {json-datei : Pfad zur JSON-Datei mit den Bewerbungsdaten}
                             {--ausgabe= : Basisname für die Ausgabedateien ohne Endung (Standard: bewerbungen_auswertung_ai_<timestamp>)}
                             {--id= : Nur eine bestimmte Bewerbungs-ID verarbeiten}
-                            {--modell= : KI-Modell (überschreibt Standard)}
+                            {--modell= : KI-Modell (überschreibt App-Einstellungen und config/ai.php)}
                             {--ohne-zwischenspeicher : Dateien nicht aus dem lokalen Download-Cache laden (Download erfolgt trotzdem und aktualisiert den Cache)}';
 
     protected $description = 'Wertet Bewerbungen mit laravel/ai (Open Web UI/Ollama oder Langdock laut App-Einstellungen) aus und erstellt CSV/Excel-Ausgabe.';
@@ -93,10 +93,21 @@ class BewerbungenAuswertenAiCommand extends Command
 
         File::ensureDirectoryExists($this->downloadCacheVerzeichnis());
 
-        $modell = $this->option('modell') ?: null;
+        $cliModell = $this->option('modell') ?: null;
         $appSettings = IntranetAppBewerbungenSettings::resolvedAppSettings();
         $kiProvider = $appSettings->bewerbungenAuswertungAiProvider;
         $kiProviderLabel = BewerbungenAuswertungAiProvider::options()[$kiProvider->value];
+        $auswertungModell = $this->resolveAuswertungModell($cliModell, $appSettings);
+        $fallbackDefault = match ($kiProvider) {
+            BewerbungenAuswertungAiProvider::OpenWebUi => (string) config('ai.providers.openwebui.models.text.default'),
+            BewerbungenAuswertungAiProvider::Langdock => (string) config('ai.providers.langdock.models.text.default'),
+        };
+        $modellAnzeige = $auswertungModell ?? $fallbackDefault;
+        $modellQuelle = match (true) {
+            $cliModell !== null && trim((string) $cliModell) !== '' => 'CLI --modell',
+            $auswertungModell !== null => 'App-Einstellungen',
+            default => 'config/ai.php (Standard je Provider)',
+        };
         $basisname = $this->option('ausgabe') ?? 'bewerbungen_auswertung_ai_'.now()->format('Y-m-d_His');
         $csvPfad = $basisname.'.csv';
         $xlsxPfad = $basisname.'.xlsx';
@@ -104,7 +115,7 @@ class BewerbungenAuswertenAiCommand extends Command
         $this->info('=== Bewerbungen Auswertung (laravel/ai) ===');
         $this->info('Verarbeite '.count($bewerbungen).' Bewerbung(en)');
         $this->info('KI-Provider: '.$kiProviderLabel.' ('.$kiProvider->value.')');
-        $this->info('Modell: '.($modell ?? 'Standard (je nach Provider)'));
+        $this->info('Modell: '.$modellAnzeige.' ('.$modellQuelle.')');
         $this->info('Download-Zwischenspeicher: '.$this->downloadCacheVerzeichnis());
         $this->newLine();
 
@@ -117,7 +128,7 @@ class BewerbungenAuswertenAiCommand extends Command
             $this->statusZeile("<fg=cyan>[{$aktuell}/{$gesamtAnzahl}]</> Bewerbung <fg=yellow>ID {$id}</> – Start");
 
             try {
-                $ergebnis = $this->verarbeiteBewerbung((string) $id, $links, $modell, $appSettings);
+                $ergebnis = $this->verarbeiteBewerbung((string) $id, $links, $auswertungModell, $appSettings);
                 $ergebnis['id'] = $id;
                 $ergebnis['bewerbung_ro'] = $links['bewerbung_ro'] ?? '';
                 $ergebnis['anhang_ro'] = $links['anhang_ro'] ?? '';
@@ -149,6 +160,28 @@ class BewerbungenAuswertenAiCommand extends Command
         $this->info("Abgeschlossen: {$erfolgreich} von {$gesamtAnzahl} Bewerbungen erfolgreich ausgewertet.");
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Reihenfolge: CLI `--modell` (wenn gesetzt), sonst App-Einstellungen je Provider, sonst `null` (= Laravel-AI-Default aus config/ai.php).
+     */
+    private function resolveAuswertungModell(?string $cliModell, AppSettings $appSettings): ?string
+    {
+        if ($cliModell !== null && trim($cliModell) !== '') {
+            return trim($cliModell);
+        }
+
+        return match ($appSettings->bewerbungenAuswertungAiProvider) {
+            BewerbungenAuswertungAiProvider::OpenWebUi => $this->trimmedNonEmpty($appSettings->bewerbungenAuswertungModelOpenWebUi),
+            BewerbungenAuswertungAiProvider::Langdock => $this->trimmedNonEmpty($appSettings->bewerbungenAuswertungModelLangdock),
+        };
+    }
+
+    private function trimmedNonEmpty(string $value): ?string
+    {
+        $t = trim($value);
+
+        return $t === '' ? null : $t;
     }
 
     private function downloadCacheVerzeichnis(): string
@@ -671,4 +704,3 @@ PROMPT;
         return $zeile;
     }
 }
-

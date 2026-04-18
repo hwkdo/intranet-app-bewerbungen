@@ -18,9 +18,9 @@ return [
         ],
     ],
     /*
-    | KI für bewerbungen:auswerten-ai (Provider steht in AppSettings → Admin „Bewerbungen“):
-    | - Open Web UI: OPENWEBUI_API_KEY, OPENWEBUI_BASE_API_URL_OLLAMA, OPENWEBUI_DEFAULT_MODEL (siehe config/ai.php → openwebui)
-    | - Langdock: LANGDOCK_API_KEY, LANGDOCK_BASE_API_URL, BEWERBUNGEN_AI_LANGDOCK_MODEL (siehe config/ai.php → langdock, config/services.php)
+    | KI für bewerbungen:auswerten-ai (Provider + optionale Modell-Overrides in AppSettings → Admin „Bewerbungen“):
+    | - Open Web UI: OPENWEBUI_*; Modell: AppSettings bewerbungenAuswertungModelOpenWebUi, sonst OPENWEBUI_DEFAULT_MODEL (config/ai.php → openwebui)
+    | - Langdock: LANGDOCK_*; Modell: AppSettings bewerbungenAuswertungModelLangdock, sonst BEWERBUNGEN_AI_LANGDOCK_MODEL (config/ai.php → langdock)
     */
     'ai' => [
         'download_cache_path' => env('BEWERBUNGEN_DOWNLOAD_CACHE_PATH', 'bewerbungen_auswertung_cache'),

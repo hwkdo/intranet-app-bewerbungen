@@ -14,15 +14,21 @@ class AppSettings extends BaseAppSettings
         #[Description('KI-Backend für den Artisan-Befehl bewerbungen:auswerten-ai (Laravel-AI-Provider-Name)')]
         public BewerbungenAuswertungAiProvider $bewerbungenAuswertungAiProvider = BewerbungenAuswertungAiProvider::OpenWebUi,
 
+        #[Description('Modell für Bewerbungsauswertung (KI) bei Open Web UI / Ollama (z. B. gpt-oss:20b). Leer = Fallback auf OPENWEBUI_DEFAULT_MODEL / config/ai.php.')]
+        public string $bewerbungenAuswertungModelOpenWebUi = 'gpt-oss:20b',
+
+        #[Description('Modell für Bewerbungsauswertung (KI) bei Langdock (nur von Langdock erlaubte IDs). Leer = Fallback auf BEWERBUNGEN_AI_LANGDOCK_MODEL / config/ai.php.')]
+        public string $bewerbungenAuswertungModelLangdock = 'gpt-5.4-mini',
+
         #[Description('Aktiviert die Beispiel-Funktionalität')]
         public bool $enableExampleFeature = true,
-        
+
         #[Description('Maximale Anzahl von Elementen pro Seite')]
         public int $maxItemsPerPage = 25,
-        
+
         #[Description('Standard-Theme für die App')]
         public string $defaultTheme = 'light',
-        
+
         #[Description('Liste der erlaubten Bereiche')]
         public array $allowedAreas = ['public', 'private'],
     ) {}
