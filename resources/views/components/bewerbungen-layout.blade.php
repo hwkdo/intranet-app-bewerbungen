@@ -9,6 +9,7 @@
         ['label' => 'Übersicht', 'href' => route('apps.bewerbungen.index'), 'icon' => 'home', 'description' => 'Zurück zur Übersicht', 'buttonText' => 'Übersicht anzeigen'],
         ['label' => 'Beispielseite', 'href' => route('apps.bewerbungen.example'), 'icon' => 'document-text', 'description' => 'Beispielseite anzeigen', 'buttonText' => 'Beispielseite öffnen'],
         ['label' => 'Meine Einstellungen', 'href' => route('apps.bewerbungen.settings.user'), 'icon' => 'cog-6-tooth', 'description' => 'Persönliche Einstellungen anpassen', 'buttonText' => 'Einstellungen öffnen'],
+        ['label' => 'App-Info', 'href' => route('apps.bewerbungen.info'), 'icon' => 'information-circle', 'description' => 'Installierte Version und Release-Historie', 'buttonText' => 'App-Info anzeigen'],
         ['label' => 'Admin', 'href' => route('apps.bewerbungen.admin.index'), 'icon' => 'shield-check', 'description' => 'Administrationsbereich verwalten', 'buttonText' => 'Admin öffnen', 'permission' => 'manage-app-bewerbungen']
     ];
     
