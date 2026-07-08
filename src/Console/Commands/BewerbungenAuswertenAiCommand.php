@@ -11,6 +11,10 @@ use Hwkdo\IntranetAppBewerbungen\Enums\BewerbungenAuswertungAiProvider;
 use Hwkdo\IntranetAppBewerbungen\Models\IntranetAppBewerbungenSettings;
 use Hwkdo\IntranetAppBewerbungen\Support\ExtraktionsTextBewertung;
 use Hwkdo\IntranetAppBewerbungen\Support\ExtraktionsTextValidator;
+use Hwkdo\IntranetAppBase\Contracts\IntranetAiGatewayInterface;
+use Hwkdo\IntranetAppBase\Data\AiRequestContext;
+use Hwkdo\IntranetAppBase\Enums\AiCapability;
+use Hwkdo\IntranetAppBase\Enums\AiProvider;
 use Hwkdo\MsGraphLaravel\Interfaces\MsGraphShareServiceInterface;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
@@ -60,6 +64,7 @@ class BewerbungenAuswertenAiCommand extends Command
     public function __construct(
         private readonly MsGraphShareServiceInterface $shareService,
         private readonly HwkAdminService $hwkAdminService,
+        private readonly IntranetAiGatewayInterface $aiGateway,
     ) {
         parent::__construct();
     }
@@ -473,20 +478,30 @@ class BewerbungenAuswertenAiCommand extends Command
 
         $prompt = $this->erstellePrompt($texte, $anhangNamen);
 
-        $agent = BewerbungsAgent::make();
-
-        $response = $agent->prompt(
-            prompt: $prompt,
-            attachments: [],
-            provider: $kiProvider->value,
-            model: $modell,
+        $structured = $this->aiGateway->agent(
+            BewerbungsAgent::make(),
+            $prompt,
+            new AiRequestContext(
+                appIdentifier: 'bewerbungen',
+                capability: AiCapability::Agent,
+                providerOverride: $this->mapKiProvider($kiProvider),
+                modelOverride: $modell,
+            ),
         );
 
-        if (! isset($response->structured) || ! is_array($response->structured)) {
+        if (! is_array($structured)) {
             throw new \Exception('KI-Antwort enthält keine strukturierten Daten.');
         }
 
-        return $response->structured;
+        return $structured;
+    }
+
+    private function mapKiProvider(BewerbungenAuswertungAiProvider $provider): AiProvider
+    {
+        return match ($provider) {
+            BewerbungenAuswertungAiProvider::OpenWebUi => AiProvider::OpenWebUi,
+            BewerbungenAuswertungAiProvider::Langdock => AiProvider::Langdock,
+        };
     }
 
     /**

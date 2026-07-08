@@ -12,11 +12,6 @@ class BewerbungsAgent implements Agent, HasStructuredOutput
 {
     use Promptable;
 
-    public function provider(): string
-    {
-        return 'openwebui';
-    }
-
     public function timeout(): int
     {
         return 300;
