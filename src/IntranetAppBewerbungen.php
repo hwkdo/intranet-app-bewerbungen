@@ -33,7 +33,7 @@ class IntranetAppBewerbungen implements IntranetAppInterface
     
     public static function userSettingsClass(): ?string
     {
-        return \Hwkdo\IntranetAppBewerbungen\Data\UserSettings::class;
+        return null;
     }
     
     public static function appSettingsClass(): ?string
