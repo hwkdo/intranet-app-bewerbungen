@@ -14,7 +14,10 @@ class AppSettings extends BaseAppSettings implements HasAiSettings
 {
     public function __construct(
         #[Description('KI-Backend für den Artisan-Befehl bewerbungen:auswerten-ai (Laravel-AI-Provider-Name)')]
-        public BewerbungenAuswertungAiProvider $bewerbungenAuswertungAiProvider = BewerbungenAuswertungAiProvider::OpenWebUi,
+        public BewerbungenAuswertungAiProvider $bewerbungenAuswertungAiProvider = BewerbungenAuswertungAiProvider::GemmaLlamaCpp,
+
+        #[Description('Modell für Bewerbungsauswertung (KI) bei Gemma (llama.cpp). Leer = Standard aus config/ai.php.')]
+        public string $bewerbungenAuswertungModelGemmaLlamaCpp = 'gemma-4-26b-a4b(llama-cpp)',
 
         #[Description('Modell für Bewerbungsauswertung (KI) bei Open Web UI / Ollama (z. B. gpt-oss:20b). Leer = Fallback auf OPENWEBUI_DEFAULT_MODEL / config/ai.php.')]
         public string $bewerbungenAuswertungModelOpenWebUi = 'gpt-oss:20b',
@@ -54,6 +57,7 @@ class AppSettings extends BaseAppSettings implements HasAiSettings
         }
 
         return match ($this->bewerbungenAuswertungAiProvider) {
+            BewerbungenAuswertungAiProvider::GemmaLlamaCpp => AiProvider::GemmaLlamaCpp,
             BewerbungenAuswertungAiProvider::OpenWebUi => AiProvider::OpenWebUi,
             BewerbungenAuswertungAiProvider::Langdock => AiProvider::Langdock,
         };
@@ -66,6 +70,7 @@ class AppSettings extends BaseAppSettings implements HasAiSettings
         }
 
         $legacy = match ($this->bewerbungenAuswertungAiProvider) {
+            BewerbungenAuswertungAiProvider::GemmaLlamaCpp => $this->bewerbungenAuswertungModelGemmaLlamaCpp,
             BewerbungenAuswertungAiProvider::OpenWebUi => $this->bewerbungenAuswertungModelOpenWebUi,
             BewerbungenAuswertungAiProvider::Langdock => $this->bewerbungenAuswertungModelLangdock,
         };

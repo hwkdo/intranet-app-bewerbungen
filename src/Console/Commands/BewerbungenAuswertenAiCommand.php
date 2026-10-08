@@ -4,17 +4,16 @@ declare(strict_types=1);
 
 namespace Hwkdo\IntranetAppBewerbungen\Console\Commands;
 
-use Hwkdo\HwkAdminLaravel\HwkAdminService;
-use Hwkdo\IntranetAppBewerbungen\Ai\Agents\BewerbungsAgent;
-use Hwkdo\IntranetAppBewerbungen\Data\AppSettings;
-use Hwkdo\IntranetAppBewerbungen\Enums\BewerbungenAuswertungAiProvider;
-use Hwkdo\IntranetAppBewerbungen\Models\IntranetAppBewerbungenSettings;
-use Hwkdo\IntranetAppBewerbungen\Support\ExtraktionsTextBewertung;
-use Hwkdo\IntranetAppBewerbungen\Support\ExtraktionsTextValidator;
 use Hwkdo\IntranetAppBase\Contracts\IntranetAiGatewayInterface;
 use Hwkdo\IntranetAppBase\Data\AiRequestContext;
 use Hwkdo\IntranetAppBase\Enums\AiCapability;
 use Hwkdo\IntranetAppBase\Enums\AiProvider;
+use Hwkdo\IntranetAppBewerbungen\Ai\Agents\BewerbungsAgent;
+use Hwkdo\IntranetAppBewerbungen\Data\AppSettings;
+use Hwkdo\IntranetAppBewerbungen\Enums\BewerbungenAuswertungAiProvider;
+use Hwkdo\IntranetAppBewerbungen\Models\IntranetAppBewerbungenSettings;
+use Hwkdo\IntranetAppBewerbungen\Support\ExtraktionsTextValidator;
+use Hwkdo\LlamaParseLaravel\LlamaParse;
 use Hwkdo\MsGraphLaravel\Interfaces\MsGraphShareServiceInterface;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
@@ -24,7 +23,6 @@ use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
-use Spatie\PdfToText\Pdf;
 
 class BewerbungenAuswertenAiCommand extends Command
 {
@@ -35,10 +33,13 @@ class BewerbungenAuswertenAiCommand extends Command
                             {--modell= : KI-Modell (überschreibt App-Einstellungen und config/ai.php)}
                             {--ohne-zwischenspeicher : Dateien nicht aus dem lokalen Download-Cache laden (Download erfolgt trotzdem und aktualisiert den Cache)}';
 
-    protected $description = 'Wertet Bewerbungen mit laravel/ai (Open Web UI/Ollama oder Langdock laut App-Einstellungen) aus und erstellt CSV/Excel-Ausgabe.';
+    protected $description = 'Wertet Bewerbungen mit laravel/ai aus. Dokumente liest LlamaParse, die Auswertung läuft standardmäßig über Gemma (llama.cpp).';
 
     /** @var string[] */
-    private const ERLAUBTE_ENDUNGEN = ['pdf', 'docx', 'doc', 'txt'];
+    private const ERLAUBTE_ENDUNGEN = [
+        'pdf', 'doc', 'docx', 'txt', 'rtf', 'odt', 'ppt', 'pptx', 'xls', 'xlsx', 'csv',
+        'html', 'htm', 'md', 'jpg', 'jpeg', 'png', 'tif', 'tiff', 'webp', 'bmp', 'heic', 'gif',
+    ];
 
     /** @var array<string, string> */
     private const SPALTEN = [
@@ -63,7 +64,7 @@ class BewerbungenAuswertenAiCommand extends Command
 
     public function __construct(
         private readonly MsGraphShareServiceInterface $shareService,
-        private readonly HwkAdminService $hwkAdminService,
+        private readonly LlamaParse $llamaParse,
         private readonly IntranetAiGatewayInterface $aiGateway,
     ) {
         parent::__construct();
@@ -96,6 +97,12 @@ class BewerbungenAuswertenAiCommand extends Command
             $bewerbungen = [$filterId => $bewerbungen[$filterId]];
         }
 
+        if (! $this->llamaParse->configured()) {
+            $this->error('LlamaParse ist nicht konfiguriert. LLAMA_CLOUD_API_KEY fehlt.');
+
+            return self::FAILURE;
+        }
+
         File::ensureDirectoryExists($this->downloadCacheVerzeichnis());
 
         $cliModell = $this->option('modell') ?: null;
@@ -104,6 +111,7 @@ class BewerbungenAuswertenAiCommand extends Command
         $kiProviderLabel = BewerbungenAuswertungAiProvider::options()[$kiProvider->value];
         $auswertungModell = $this->resolveAuswertungModell($cliModell, $appSettings);
         $fallbackDefault = match ($kiProvider) {
+            BewerbungenAuswertungAiProvider::GemmaLlamaCpp => (string) config('ai.providers.gemma-llama-cpp.models.text.default'),
             BewerbungenAuswertungAiProvider::OpenWebUi => (string) config('ai.providers.openwebui.models.text.default'),
             BewerbungenAuswertungAiProvider::Langdock => (string) config('ai.providers.langdock.models.text.default'),
         };
@@ -177,6 +185,7 @@ class BewerbungenAuswertenAiCommand extends Command
         }
 
         return match ($appSettings->bewerbungenAuswertungAiProvider) {
+            BewerbungenAuswertungAiProvider::GemmaLlamaCpp => $this->trimmedNonEmpty($appSettings->bewerbungenAuswertungModelGemmaLlamaCpp),
             BewerbungenAuswertungAiProvider::OpenWebUi => $this->trimmedNonEmpty($appSettings->bewerbungenAuswertungModelOpenWebUi),
             BewerbungenAuswertungAiProvider::Langdock => $this->trimmedNonEmpty($appSettings->bewerbungenAuswertungModelLangdock),
         };
@@ -237,7 +246,7 @@ class BewerbungenAuswertenAiCommand extends Command
         $alleTexte = array_merge($bewerbungTexte, $anhangTexte);
 
         if (empty($alleTexte)) {
-            throw new \Exception('Keine lesbaren Dateien mit plausibler Textextraktion (PDF/DOCX/TXT; PDF über pdftotext).');
+            throw new \Exception('Keine lesbaren Dateien. LlamaParse hat keinen verwendbaren Text geliefert.');
         }
 
         $this->statusZeile('  <fg=blue>→</> Schritt 4/4: Warte auf KI-Antwort (BewerbungsAgent) mit '.count($alleTexte).' Dokument(en) …');
@@ -297,30 +306,13 @@ class BewerbungenAuswertenAiCommand extends Command
                     $this->statusZeile("  <fg=blue>    </> [{$index}/{$fortschrittDenominator}] {$dateiName} – gespeichert unter Zwischenspeicher");
                 }
 
-                $this->statusZeile("  <fg=blue>    </> [{$index}/{$fortschrittDenominator}] {$dateiName} – Textextraktion läuft …");
-                $text = $this->extrahiereText($lokalPfad, $ext);
+                $text = $this->liesMitLlamaParse($lokalPfad, $cachePfad, $dateiName, $index, $fortschrittDenominator);
                 $bewertung = ExtraktionsTextValidator::bewerten($text);
 
                 if ($bewertung->istPlausibel) {
                     $this->statusZeile("  <fg=green>    ℹ</> Qualität: {$bewertung->beschreibung}");
                 } else {
                     $this->statusZeile("  <fg=yellow>    ℹ</> Qualität: {$bewertung->beschreibung}");
-                }
-
-                if (! $bewertung->istPlausibel && $ext === 'pdf') {
-                    $this->statusZeile("  <fg=blue>    </> [{$index}/{$fortschrittDenominator}] {$dateiName} – OCR-Fallback (hwk-admin) wird versucht …");
-                    $ocrErgebnis = $this->versuchePdfOcrFallback($lokalPfad, $cachePfad, $dateiName, $index, $fortschrittDenominator);
-
-                    if ($ocrErgebnis !== null) {
-                        $text = $ocrErgebnis['text'];
-                        $bewertung = $ocrErgebnis['bewertung'];
-
-                        if ($bewertung->istPlausibel) {
-                            $this->statusZeile("  <fg=green>    ℹ</> Qualität nach OCR: {$bewertung->beschreibung}");
-                        } else {
-                            $this->statusZeile("  <fg=yellow>    ℹ</> Qualität nach OCR: {$bewertung->beschreibung}");
-                        }
-                    }
                 }
 
                 if ($bewertung->istPlausibel && trim($text) !== '') {
@@ -370,96 +362,28 @@ class BewerbungenAuswertenAiCommand extends Command
         }
     }
 
-    /**
-     * @return array{text: string, bewertung: ExtraktionsTextBewertung}|null
-     */
-    private function versuchePdfOcrFallback(
-        string $pdfPfad,
+    private function liesMitLlamaParse(
+        string $lokalPfad,
         string $cachePfad,
         string $dateiName,
         int $index,
         int $fortschrittDenominator,
-    ): ?array {
-        $url = (string) config('hwk-admin-laravel.url', '');
-        $token = (string) config('hwk-admin-laravel.token', '');
+    ): string {
+        $markdownPfad = $cachePfad.'.md';
+        $nutzeCache = ! $this->option('ohne-zwischenspeicher') && is_file($markdownPfad);
 
-        if ($url === '' || $token === '') {
-            $this->statusZeile("  <fg=yellow>    ⚠</> [{$index}/{$fortschrittDenominator}] {$dateiName} – OCR übersprungen (HWK Admin URL/Token fehlt)");
+        if ($nutzeCache) {
+            $this->statusZeile("  <fg=magenta>    ⊙</> [{$index}/{$fortschrittDenominator}] {$dateiName} – LlamaParse-Text aus Zwischenspeicher");
 
-            return null;
+            return file_get_contents($markdownPfad) ?: '';
         }
 
-        $ocrPfad = $cachePfad.'.ocr.pdf';
-        $nutzeOcrCache = ! $this->option('ohne-zwischenspeicher') && is_file($ocrPfad);
+        $this->statusZeile("  <fg=blue>    </> [{$index}/{$fortschrittDenominator}] {$dateiName} – LlamaParse liest die Datei …");
+        $inhalt = file_get_contents($lokalPfad);
+        $text = $this->llamaParse->parse(is_string($inhalt) ? $inhalt : '', $dateiName);
+        $this->atomarSchreiben($markdownPfad, $text);
 
-        try {
-            if ($nutzeOcrCache) {
-                $this->statusZeile("  <fg=magenta>    ⊙</> [{$index}/{$fortschrittDenominator}] {$dateiName} – OCR-Datei aus Zwischenspeicher");
-            } else {
-                $this->statusZeile("  <fg=blue>    </> [{$index}/{$fortschrittDenominator}] {$dateiName} – Warte auf OCR-API (hwk-admin) …");
-                File::ensureDirectoryExists(dirname($ocrPfad));
-                $this->hwkAdminService->ocrToLocalFile($pdfPfad, dirname($ocrPfad).'/', basename($ocrPfad));
-                $this->statusZeile("  <fg=blue>    </> [{$index}/{$fortschrittDenominator}] {$dateiName} – OCR-PDF erzeugt");
-            }
-
-            if (! is_file($ocrPfad)) {
-                $this->statusZeile("  <fg=yellow>    ⚠</> [{$index}/{$fortschrittDenominator}] {$dateiName} – OCR lieferte keine Datei");
-
-                return null;
-            }
-
-            $this->statusZeile("  <fg=blue>    </> [{$index}/{$fortschrittDenominator}] {$dateiName} – Textextraktion auf OCR-PDF läuft …");
-            $textNachOcr = $this->extrahierePdfText($ocrPfad);
-
-            return [
-                'text' => $textNachOcr,
-                'bewertung' => ExtraktionsTextValidator::bewerten($textNachOcr),
-            ];
-        } catch (\Throwable $e) {
-            $this->statusZeile("  <fg=yellow>    ⚠</> [{$index}/{$fortschrittDenominator}] {$dateiName} – OCR-Fallback fehlgeschlagen: ".$e->getMessage());
-
-            return null;
-        }
-    }
-
-    private function extrahiereText(string $pfad, string $ext): string
-    {
-        return match ($ext) {
-            'pdf' => $this->extrahierePdfText($pfad),
-            'txt' => file_get_contents($pfad) ?: '',
-            'docx' => $this->extrahiereDocxText($pfad),
-            default => '',
-        };
-    }
-
-    private function extrahierePdfText(string $pfad): string
-    {
-        $bin = config('intranet-app-bewerbungen.ai.pdftotext_binary');
-        $binPfad = is_string($bin) && $bin !== '' ? $bin : null;
-
-        return Pdf::getText($pfad, $binPfad, [], 120);
-    }
-
-    private function extrahiereDocxText(string $pfad): string
-    {
-        $zip = new \ZipArchive;
-
-        if ($zip->open($pfad) !== true) {
-            return '';
-        }
-
-        $xml = $zip->getFromName('word/document.xml');
-        $zip->close();
-
-        if ($xml === false) {
-            return '';
-        }
-
-        $text = preg_replace('/<w:p[ >]/', "\n", $xml) ?? $xml;
-        $text = strip_tags($text);
-        $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-
-        return trim($text);
+        return $text;
     }
 
     /**
@@ -470,6 +394,11 @@ class BewerbungenAuswertenAiCommand extends Command
     private function auswertungMitKi(array $texte, array $anhangNamen, ?string $modell, AppSettings $appSettings): array
     {
         $kiProvider = $appSettings->bewerbungenAuswertungAiProvider;
+
+        if ($kiProvider === BewerbungenAuswertungAiProvider::GemmaLlamaCpp
+            && trim((string) config('ai.providers.gemma-llama-cpp.key', '')) === '') {
+            throw new \Exception('Gemma ist gewählt, aber llama_cpp_api_key fehlt.');
+        }
 
         if ($kiProvider === BewerbungenAuswertungAiProvider::Langdock
             && trim((string) config('services.langdock.api_key', '')) === '') {
@@ -499,6 +428,7 @@ class BewerbungenAuswertenAiCommand extends Command
     private function mapKiProvider(BewerbungenAuswertungAiProvider $provider): AiProvider
     {
         return match ($provider) {
+            BewerbungenAuswertungAiProvider::GemmaLlamaCpp => AiProvider::GemmaLlamaCpp,
             BewerbungenAuswertungAiProvider::OpenWebUi => AiProvider::OpenWebUi,
             BewerbungenAuswertungAiProvider::Langdock => AiProvider::Langdock,
         };
@@ -508,17 +438,51 @@ class BewerbungenAuswertenAiCommand extends Command
      * @param  array<string, string>  $texte
      * @param  string[]  $anhangNamen
      */
-    private function erstellePrompt(array $texte, array $anhangNamen): string
+    private function dokumentenText(array $texte, array $anhangNamen): string
     {
+        $grenze = max(1, (int) config('intranet-app-bewerbungen.ai.max_dokument_zeichen', 150_000));
         $abschnitte = [];
+        $verwendet = 0;
+        $gekuerzt = false;
 
         foreach ($texte as $dateiName => $text) {
             $istZeugnis = in_array($dateiName, $anhangNamen, true);
             $typ = $istZeugnis ? 'ZEUGNIS/ANHANG' : 'BEWERBUNGSDOKUMENT';
-            $abschnitte[] = "=== {$typ}: {$dateiName} ===\n\n".mb_substr(trim($text), 0, 8000);
+            $block = "=== {$typ}: {$dateiName} ===\n\n".trim($text);
+            $naechsteLaenge = $verwendet + mb_strlen($block) + 2;
+
+            if ($naechsteLaenge > $grenze) {
+                $rest = $grenze - $verwendet;
+                if ($rest > 500) {
+                    $abschnitte[] = mb_substr($block, 0, $rest);
+                    $verwendet += $rest;
+                }
+                $gekuerzt = true;
+
+                break;
+            }
+
+            $abschnitte[] = $block;
+            $verwendet = $naechsteLaenge;
         }
 
         $dokumentenText = implode("\n\n", $abschnitte);
+
+        if ($gekuerzt) {
+            $this->statusZeile('  <fg=yellow>    ⚠</> Unterlagen gekürzt: sie überschreiten '.$grenze.' Zeichen (Gemma-Kontextfenster).');
+            $dokumentenText .= "\n\n[Hinweis: Weitere Unterlagen wurden gekürzt, weil sie das Kontextfenster des Modells überschreiten.]";
+        }
+
+        return $dokumentenText;
+    }
+
+    /**
+     * @param  array<string, string>  $texte
+     * @param  string[]  $anhangNamen
+     */
+    private function erstellePrompt(array $texte, array $anhangNamen): string
+    {
+        $dokumentenText = $this->dokumentenText($texte, $anhangNamen);
 
         $zeugnisHinweis = ! empty($anhangNamen)
             ? "\n\nDie folgenden Dokumente sind Zeugnisse/Anhänge: ".implode(', ', $anhangNamen)
