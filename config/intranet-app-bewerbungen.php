@@ -8,6 +8,7 @@ return [
             'permissions' => [
                 'see-app-bewerbungen',
                 'manage-app-bewerbungen',
+                'manage-app-bewerbungen-definitionen',
             ],
         ],
         'user' => [

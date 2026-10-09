@@ -6,6 +6,7 @@ use Hwkdo\IntranetAppBewerbungen\Commands\IntranetAppBewerbungenCommand;
 use Hwkdo\IntranetAppBewerbungen\Console\Commands\BewerbungenAuswertenAiCommand;
 use Hwkdo\IntranetAppBewerbungen\Console\Commands\BewerbungenAuswertenCommand;
 use Hwkdo\IntranetAppBewerbungen\Console\Commands\BewerbungenLightRagIndexCommand;
+use Livewire\Livewire;
 use Livewire\Volt\Volt;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
@@ -47,7 +48,15 @@ class IntranetAppBewerbungenServiceProvider extends PackageServiceProvider
             }
         }
         config(['lightrag.instances' => $instances]);
-        // Gate::policy(Raum::class, RaumPolicy::class);
+
+        Livewire::addNamespace(
+            namespace: 'intranet-app-bewerbungen',
+            viewPath: __DIR__.'/../resources/views/livewire',
+            classNamespace: 'Hwkdo\IntranetAppBewerbungen\Livewire',
+            classPath: __DIR__.'/Livewire',
+            classViewPath: __DIR__.'/../resources/views/livewire',
+        );
+
         $this->app->booted(function () {
             Volt::mount(__DIR__.'/../resources/views/livewire');
         });

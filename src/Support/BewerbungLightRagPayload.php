@@ -29,23 +29,22 @@ class BewerbungLightRagPayload
         if (is_array($ki)) {
             $lines[] = '';
             $lines[] = 'KI-Auswertung:';
-            foreach ([
-                'vorname' => 'Vorname',
-                'nachname' => 'Nachname',
-                'hoechster_schulabschluss' => 'Höchster Schulabschluss',
-                'durchschnittsnote' => 'Durchschnittsnote',
-                'berufserfahrung_fachspezifisch' => 'Berufserfahrung',
-                'fuehrerschein' => 'Führerschein',
-                'it_kenntnisse' => 'IT-Kenntnisse',
-                'letzte_schulform' => 'Letzte Schulform',
-                'luecken_im_lebenslauf' => 'Lücken im Lebenslauf',
-                'fehlstunden' => 'Fehlstunden',
-                'fehlstunden_unentschuldigt' => 'Fehlstunden unentschuldigt',
-                'auffaelligkeiten' => 'Auffälligkeiten',
-                'verarbeitete_zeugnisse' => 'Verarbeitete Zeugnisse',
-                'status' => 'Auswertungsstatus',
-            ] as $key => $label) {
-                $lines[] = $label.': '.self::value($ki[$key] ?? null);
+            $eintraege = array_merge(
+                is_array($ki['fields'] ?? null) ? $ki['fields'] : [],
+                is_array($ki['system'] ?? null) ? $ki['system'] : [],
+            );
+            foreach ($eintraege as $eintrag) {
+                if (! is_array($eintrag)) {
+                    continue;
+                }
+                $label = (string) ($eintrag['label'] ?? $eintrag['key'] ?? '');
+                if ($label === '') {
+                    continue;
+                }
+                $lines[] = $label.': '.self::value($eintrag['value'] ?? null);
+            }
+            if (isset($ki['status'])) {
+                $lines[] = 'Auswertungsstatus: '.self::value($ki['status']);
             }
         }
 

@@ -3,6 +3,7 @@
 namespace Hwkdo\IntranetAppBewerbungen\Http\Controllers\Api;
 
 use Hwkdo\IntranetAppBewerbungen\Jobs\AnalyzeLegacyBewerbungJob;
+use Hwkdo\IntranetAppBewerbungen\Models\KiDefinition;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -15,6 +16,7 @@ class LegacyBewerbungenAiController
             'request_id' => ['required', 'string', 'max:100'],
             'bewerbung_id' => ['required', 'integer', 'min:1'],
             'stelle_id' => ['nullable', 'integer', 'min:1'],
+            'definition_id' => ['nullable', 'integer', 'min:1'],
             'cloud_bewerbung_ro' => ['required', 'string', 'max:2048'],
             'cloud_anhang_ro' => ['nullable', 'string', 'max:2048'],
             'triggered_at' => ['nullable', 'date'],
@@ -37,5 +39,13 @@ class LegacyBewerbungenAiController
             'bewerbung_id' => $data['bewerbung_id'],
         ], 202);
     }
-}
 
+    public function definitionen(): JsonResponse
+    {
+        $definitionen = KiDefinition::query()
+            ->orderBy('name')
+            ->get(['id', 'name', 'beschreibung', 'is_default']);
+
+        return response()->json($definitionen);
+    }
+}
