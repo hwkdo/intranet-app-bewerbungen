@@ -188,7 +188,7 @@ new class extends Component
     </flux:select>
 
     @if ($stelleId !== '')
-        <flux:select wire:model="bewerbungId" label="Bewerbung" placeholder="Bewerbung wählen">
+        <flux:select wire:model.live="bewerbungId" label="Bewerbung" placeholder="Bewerbung wählen">
             @foreach ($bewerbungen as $bewerbung)
                 <flux:select.option value="{{ $bewerbung['id'] }}">{{ $bewerbung['label'] }}</flux:select.option>
             @endforeach
