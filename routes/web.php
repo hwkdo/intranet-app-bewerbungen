@@ -12,6 +12,8 @@ Route::middleware(['web', 'auth', 'can:see-app-bewerbungen'])->group(function ()
 
 Route::middleware(['web', 'auth', 'can:manage-app-bewerbungen'])->group(function () {
     Volt::route('apps/bewerbungen/admin', 'apps.bewerbungen.admin.index')->name('apps.bewerbungen.admin.index');
+    Route::livewire('apps/bewerbungen/pipeline', 'intranet-app-bewerbungen::apps.bewerbungen.pipeline')
+        ->name('apps.bewerbungen.pipeline');
 });
 
 Route::middleware(['web', 'auth', 'can:manage-app-bewerbungen-definitionen'])->group(function () {

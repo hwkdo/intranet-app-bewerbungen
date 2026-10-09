@@ -6,6 +6,7 @@ namespace Hwkdo\IntranetAppBewerbungen\Jobs;
 
 use Hwkdo\IntranetAppBewerbungen\Models\KiDefinition;
 use Hwkdo\IntranetAppBewerbungen\Services\BewerbungAnalyseService;
+use Hwkdo\IntranetAppBewerbungen\Support\AnalyseLaufProtokoll;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -52,20 +53,38 @@ class TestDefinitionJob implements ShouldQueue
             'felder' => $this->felder,
         ]);
 
+        $protokoll = new AnalyseLaufProtokoll('test-'.$this->token);
+        $protokoll->starten([
+            'quelle' => 'test',
+            'queue_wait_ms' => $this->wartezeitMs(),
+        ]);
+
         try {
             $result = $analyse->analysiereLinks([
                 'bewerbung_ro' => $this->bewerbungRo,
                 'anhang_ro' => $this->anhangRo,
-            ], $definition, false);
+            ], $definition, false, protokoll: $protokoll);
+            $protokoll->abschliessen('success');
             Cache::put(self::cacheKey($this->token), [
                 'status' => 'done',
                 'result' => $result,
             ], now()->addHour());
         } catch (Throwable $exception) {
+            $protokoll->abschliessen('failed', $exception->getMessage());
             Cache::put(self::cacheKey($this->token), [
                 'status' => 'failed',
                 'error' => $exception->getMessage(),
             ], now()->addHour());
         }
+    }
+
+    private function wartezeitMs(): ?int
+    {
+        $createdAt = $this->job?->payload()['createdAt'] ?? null;
+        if (! is_numeric($createdAt)) {
+            return null;
+        }
+
+        return max(0, (int) round((microtime(true) - (int) $createdAt) * 1000));
     }
 }

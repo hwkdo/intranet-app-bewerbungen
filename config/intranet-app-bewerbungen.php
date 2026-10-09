@@ -30,6 +30,27 @@ return [
         'max_dokument_zeichen' => 150_000,
     ],
 
+    /*
+    | Operator-Cockpit der Stellenanalyse. Leer lassen, dann leitet das Cockpit die
+    | llama.cpp-Basis von config/ai.php (gemma-llama-cpp.url, ohne /v1) ab.
+    | Hostmetriken nur setzen, wenn ein Exporter erreichbar ist. Keine Defaults erfinden.
+    |
+    | BEWERBUNGEN_LLAMA_CPP_BASE_URL       optional, z. B. https://llama.example
+    | BEWERBUNGEN_DGX_DCGM_METRICS_URL     optional, z. B. https://dcgm.ai.hwkdo.com/metrics
+    | BEWERBUNGEN_DGX_NODE_EXPORTER_URL    optional, z. B. https://node.ai.hwkdo.com/metrics
+    |
+    | Beide Hosts liegen hinter der Traefik-Middleware ollama-apikey.
+    | Das Cockpit sendet dafür llama_cpp_api_key (config/ai.php, gemma-llama-cpp.key)
+    | als Authorization: Bearer und als X-API-Key.
+    */
+    'pipeline' => [
+        'llama_base_url' => env('BEWERBUNGEN_LLAMA_CPP_BASE_URL'),
+        'dcgm_metrics_url' => env('BEWERBUNGEN_DGX_DCGM_METRICS_URL'),
+        'node_exporter_url' => env('BEWERBUNGEN_DGX_NODE_EXPORTER_URL'),
+        'dram_peak_gb_s' => (float) env('BEWERBUNGEN_DGX_DRAM_PEAK_GB_S', 273),
+        'gpu_budget_watt' => (float) env('BEWERBUNGEN_DGX_GPU_BUDGET_WATT', 140),
+    ],
+
     'lightrag' => [
         'api_key' => env('LIGHTRAG_PERSO_API_KEY', env('lightrag_perso_api_key')),
         'execute_in_tests' => false,

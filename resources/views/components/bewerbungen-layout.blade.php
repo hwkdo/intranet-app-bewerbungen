@@ -9,6 +9,7 @@
         ['label' => 'Übersicht', 'href' => route('apps.bewerbungen.index'), 'icon' => 'home', 'description' => 'Zurück zur Übersicht', 'buttonText' => 'Übersicht anzeigen'],
         ['label' => 'Beispielseite', 'href' => route('apps.bewerbungen.example'), 'icon' => 'document-text', 'description' => 'Beispielseite anzeigen', 'buttonText' => 'Beispielseite öffnen'],        ['label' => 'App-Info', 'href' => route('apps.bewerbungen.info'), 'icon' => 'information-circle', 'description' => 'Installierte Version und Release-Historie', 'buttonText' => 'App-Info anzeigen'],
         ['label' => 'KI-Definitionen', 'href' => route('apps.bewerbungen.definitionen.index'), 'icon' => 'sparkles', 'description' => 'Auswertungsdefinitionen verwalten und testen', 'buttonText' => 'Definitionen öffnen', 'permission' => 'manage-app-bewerbungen-definitionen'],
+        ['label' => 'Pipeline', 'href' => route('apps.bewerbungen.pipeline'), 'icon' => 'chart-bar', 'description' => 'Queue, laufender Job und LLM-Auslastung', 'buttonText' => 'Pipeline öffnen', 'permission' => 'manage-app-bewerbungen'],
         ['label' => 'Admin', 'href' => route('apps.bewerbungen.admin.index'), 'icon' => 'shield-check', 'description' => 'Administrationsbereich verwalten', 'buttonText' => 'Admin öffnen', 'permission' => 'manage-app-bewerbungen']
     ];
     

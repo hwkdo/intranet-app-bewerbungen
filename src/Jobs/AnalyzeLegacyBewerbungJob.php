@@ -4,6 +4,7 @@ namespace Hwkdo\IntranetAppBewerbungen\Jobs;
 
 use Hwkdo\IntranetAppBewerbungen\Services\BewerbungAnalyseService;
 use Hwkdo\IntranetAppBewerbungen\Services\LegacyBewerbungenAiCallbackService;
+use Hwkdo\IntranetAppBewerbungen\Support\AnalyseLaufProtokoll;
 use Hwkdo\IntranetAppBewerbungen\Support\KiDefinitionResolver;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -56,6 +57,15 @@ class AnalyzeLegacyBewerbungJob implements ShouldQueue
 
         Log::info('Legacy KI Analyse gestartet', $logContext);
 
+        $protokoll = new AnalyseLaufProtokoll($requestId);
+        $protokoll->starten([
+            'bewerbung_id' => $bewerbungId,
+            'stelle_id' => isset($this->payload['stelle_id']) ? (int) $this->payload['stelle_id'] : null,
+            'definition_id' => isset($this->payload['definition_id']) ? (int) $this->payload['definition_id'] : null,
+            'quelle' => 'stelle',
+            'queue_wait_ms' => $this->wartezeitMs(),
+        ]);
+
         try {
             $definitionId = isset($this->payload['definition_id']) ? (int) $this->payload['definition_id'] : null;
             $aufgeloest = $definitionen->resolve($definitionId !== null && $definitionId > 0 ? $definitionId : null);
@@ -71,9 +81,11 @@ class AnalyzeLegacyBewerbungJob implements ShouldQueue
                 ],
                 $aufgeloest['definition'],
                 $aufgeloest['fallback'],
+                protokoll: $protokoll,
             );
 
             $durationMs = (int) ((microtime(true) - $start) * 1000);
+            $protokoll->abschliessen('success');
             $callbackService->sendResult([
                 'request_id' => $requestId,
                 'bewerbung_id' => $bewerbungId,
@@ -84,11 +96,17 @@ class AnalyzeLegacyBewerbungJob implements ShouldQueue
                 'duration_ms' => $durationMs,
                 'result' => $envelope,
             ]);
+            $phasen = $protokoll->oeffentlich();
             Log::info('Legacy KI Analyse erfolgreich abgeschlossen', $logContext + [
                 'duration_ms' => $durationMs,
+                'queue_wait_ms' => $phasen['queue_wait_ms'] ?? null,
+                'graph_ms' => $phasen['graph_ms'] ?? null,
+                'extraktion_ms' => $phasen['extraktion_ms'] ?? null,
+                'llm_ms' => $phasen['llm_ms'] ?? null,
             ]);
         } catch (Throwable $e) {
             $durationMs = (int) ((microtime(true) - $start) * 1000);
+            $protokoll->abschliessen('failed', $e->getMessage());
             Log::error('Legacy KI Analyse fehlgeschlagen', $logContext + [
                 'error' => $e->getMessage(),
                 'exception_class' => $e::class,
@@ -121,6 +139,10 @@ class AnalyzeLegacyBewerbungJob implements ShouldQueue
             ]);
         }
 
+        if ($requestId !== '') {
+            AnalyseLaufProtokoll::fehlgeschlagenMarkieren($requestId, $exception?->getMessage() ?? 'Queue-Job fehlgeschlagen');
+        }
+
         if ($requestId === '' || $bewerbungId <= 0) {
             Log::warning('Legacy KI Analyse: Fehler-Callback übersprungen, Payload unvollständig', $logContext);
 
@@ -148,5 +170,15 @@ class AnalyzeLegacyBewerbungJob implements ShouldQueue
                 'callback_exception_class' => $callbackException::class,
             ]);
         }
+    }
+
+    private function wartezeitMs(): ?int
+    {
+        $createdAt = $this->job?->payload()['createdAt'] ?? null;
+        if (! is_numeric($createdAt)) {
+            return null;
+        }
+
+        return max(0, (int) round((microtime(true) - (int) $createdAt) * 1000));
     }
 }

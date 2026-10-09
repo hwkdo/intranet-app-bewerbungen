@@ -14,6 +14,7 @@ use Hwkdo\IntranetAppBewerbungen\Ai\Agents\DefinitionsAgent;
 use Hwkdo\IntranetAppBewerbungen\Enums\BewerbungenAuswertungAiProvider;
 use Hwkdo\IntranetAppBewerbungen\Models\IntranetAppBewerbungenSettings;
 use Hwkdo\IntranetAppBewerbungen\Models\KiDefinition;
+use Hwkdo\IntranetAppBewerbungen\Support\AnalyseLaufProtokoll;
 use Hwkdo\IntranetAppBewerbungen\Support\ExtraktionsTextValidator;
 use Hwkdo\IntranetAppBewerbungen\Support\KiErgebnisEnvelope;
 use Hwkdo\MsGraphLaravel\Interfaces\MsGraphShareServiceInterface;
@@ -47,6 +48,7 @@ class BewerbungAnalyseService
         ?string $modell = null,
         bool $ohneCache = false,
         ?callable $status = null,
+        ?AnalyseLaufProtokoll $protokoll = null,
     ): array {
         $bewerbungRo = (string) ($links['bewerbung_ro'] ?? '');
         if ($bewerbungRo === '') {
@@ -54,27 +56,32 @@ class BewerbungAnalyseService
         }
 
         $this->statusZeile($status, '  <fg=blue>→</> Schritt 1/4: Warte auf API – Bewerbungsordner (Graph) …');
-        $bewerbungDateien = $this->shareService->getSharedFolderContents($bewerbungRo);
+        $bewerbungDateien = $this->messen($protokoll, 'graph', 'Lade Bewerbungsordner (Graph)', fn () => $this->shareService->getSharedFolderContents($bewerbungRo));
         $this->statusZeile($status, '  <fg=blue>  </> '.count($bewerbungDateien).' Datei(en) im Bewerbungsordner.');
+        $protokoll?->schritt('graph', count($bewerbungDateien).' Datei(en) im Bewerbungsordner');
 
         $anhangDateien = [];
         $anhangRo = $links['anhang_ro'] ?? null;
         if (is_string($anhangRo) && $anhangRo !== '') {
             $this->statusZeile($status, '  <fg=blue>→</> Schritt 2/4: Warte auf API – Anhangsordner (Graph) …');
             try {
-                $anhangDateien = $this->shareService->getSharedFolderContents($anhangRo);
+                $anhangDateien = $this->messen($protokoll, 'graph', 'Lade Anhangsordner (Graph)', fn () => $this->shareService->getSharedFolderContents($anhangRo));
                 $this->statusZeile($status, '  <fg=blue>  </> '.count($anhangDateien).' Datei(en) im Anhangsordner.');
+                $protokoll?->schritt('graph', count($anhangDateien).' Datei(en) im Anhangsordner');
             } catch (\Throwable) {
                 $this->statusZeile($status, '  <fg=yellow>  ⚠</> Anhangsordner nicht abrufbar (optional, übersprungen).');
+                $protokoll?->schritt('graph', 'Anhangsordner nicht abrufbar, übersprungen');
             }
         } else {
             $this->statusZeile($status, '  <fg=blue>→</> Schritt 2/4: Kein Anhangsordner – übersprungen.');
+            $protokoll?->schritt('graph', 'Kein Anhangsordner');
         }
 
         $this->statusZeile($status, '  <fg=blue>→</> Schritt 3/4: Dateien laden / aus Zwischenspeicher lesen und Text extrahieren …');
+        $protokoll?->schritt('extraktion', 'Dateien laden und Text extrahieren');
         $cacheId = hash('sha256', $bewerbungRo.'|'.(string) $anhangRo);
-        $bewerbungTexte = $this->extrahiereDateiTexte($bewerbungDateien, $cacheId, 'bewerbung', $ohneCache, $status);
-        $anhangTexte = $this->extrahiereDateiTexte($anhangDateien, $cacheId, 'anhang', $ohneCache, $status);
+        $bewerbungTexte = $this->extrahiereDateiTexte($bewerbungDateien, $cacheId, 'bewerbung', $ohneCache, $status, $protokoll);
+        $anhangTexte = $this->extrahiereDateiTexte($anhangDateien, $cacheId, 'anhang', $ohneCache, $status, $protokoll);
         $anhangNamen = array_keys($anhangTexte);
         $alleTexte = array_merge($bewerbungTexte, $anhangTexte);
 
@@ -83,8 +90,14 @@ class BewerbungAnalyseService
         }
 
         $this->statusZeile($status, '  <fg=blue>→</> Schritt 4/4: Warte auf KI-Antwort mit '.count($alleTexte).' Dokument(en) …');
-        $roh = $this->auswertungMitKi($this->erstellePrompt($definition, $alleTexte, $anhangNamen, $status), $definition, $modell);
+        $roh = $this->messen(
+            $protokoll,
+            'llm',
+            'Warte auf KI-Antwort ('.count($alleTexte).' Dokumente)',
+            fn () => $this->auswertungMitKi($this->erstellePrompt($definition, $alleTexte, $anhangNamen, $status), $definition, $modell),
+        );
         $this->statusZeile($status, '  <fg=green>  </> KI-Antwort erhalten.');
+        $protokoll?->schritt('llm', 'KI-Antwort erhalten');
 
         $dokumente = array_keys($alleTexte);
 
@@ -118,7 +131,7 @@ class BewerbungAnalyseService
      * @param  (callable(string): void)|null  $status
      * @return array<string, string>
      */
-    private function extrahiereDateiTexte(array $dateiListe, string $cacheId, string $typ, bool $ohneCache, ?callable $status): array
+    private function extrahiereDateiTexte(array $dateiListe, string $cacheId, string $typ, bool $ohneCache, ?callable $status, ?AnalyseLaufProtokoll $protokoll = null): array
     {
         $texte = [];
         $gesamt = count($dateiListe);
@@ -147,16 +160,27 @@ class BewerbungAnalyseService
             try {
                 if ($nutzeCache) {
                     $this->statusZeile($status, "  <fg=magenta>    ⊙</> [{$index}/{$fortschrittDenominator}] {$dateiName} – aus Zwischenspeicher (kein Download)");
+                    $protokoll?->schritt('extraktion', "{$dateiName} aus Zwischenspeicher ({$index}/{$fortschrittDenominator})");
                     $lokalPfad = $cachePfad;
                 } else {
                     $this->statusZeile($status, "  <fg=blue>    ↓</> [{$index}/{$fortschrittDenominator}] {$dateiName} – Warte auf Download (Graph) …");
-                    $inhalt = $this->shareService->downloadDriveItemContent($downloadUrl);
+                    $inhalt = $this->messen(
+                        $protokoll,
+                        'graph',
+                        "Lade {$dateiName} ({$index}/{$fortschrittDenominator})",
+                        fn () => $this->shareService->downloadDriveItemContent($downloadUrl),
+                    );
                     $this->atomarSchreiben($cachePfad, $inhalt);
                     $lokalPfad = $cachePfad;
                     $this->statusZeile($status, "  <fg=blue>    </> [{$index}/{$fortschrittDenominator}] {$dateiName} – gespeichert unter Zwischenspeicher");
                 }
 
-                $text = $this->liesDokument($lokalPfad, $cachePfad, (string) $dateiName, $index, $fortschrittDenominator, $ohneCache, $status);
+                $text = $this->messen(
+                    $protokoll,
+                    'extraktion',
+                    "Extrahiere Text aus {$dateiName} ({$index}/{$fortschrittDenominator})",
+                    fn () => $this->liesDokument($lokalPfad, $cachePfad, (string) $dateiName, $index, $fortschrittDenominator, $ohneCache, $status),
+                );
                 $bewertung = ExtraktionsTextValidator::bewerten($text);
                 $this->statusZeile($status, $bewertung->istPlausibel
                     ? "  <fg=green>    ℹ</> Qualität: {$bewertung->beschreibung}"
@@ -374,6 +398,24 @@ PROMPT;
     {
         if ($status !== null) {
             $status($nachricht);
+        }
+    }
+
+    /**
+     * @template T
+     *
+     * @param  callable(): T  $callback
+     * @return T
+     */
+    private function messen(?AnalyseLaufProtokoll $protokoll, string $phase, string $text, callable $callback): mixed
+    {
+        $protokoll?->schritt($phase, $text);
+        $start = microtime(true);
+
+        try {
+            return $callback();
+        } finally {
+            $protokoll?->addMs($phase, (int) round((microtime(true) - $start) * 1000));
         }
     }
 }
