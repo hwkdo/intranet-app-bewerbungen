@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace Hwkdo\IntranetAppBewerbungen\Console\Commands;
 
+use Hwkdo\IntranetAppBase\Contracts\IntranetAiGatewayInterface;
 use Hwkdo\IntranetAppBewerbungen\Services\LegacyBewerbungenStelleClient;
 use Hwkdo\IntranetAppBewerbungen\Services\LightRagBewerbungenClient;
 use Hwkdo\IntranetAppBewerbungen\Support\BewerbungLightRagFiles;
 use Hwkdo\IntranetAppBewerbungen\Support\BewerbungLightRagPayload;
-use Hwkdo\LlamaParseLaravel\LlamaParse;
 use Hwkdo\MsGraphLaravel\Interfaces\MsGraphShareServiceInterface;
 use Illuminate\Console\Command;
 use Throwable;
@@ -25,7 +25,7 @@ class BewerbungenLightRagIndexCommand extends Command
         LegacyBewerbungenStelleClient $legacy,
         LightRagBewerbungenClient $lightRag,
         MsGraphShareServiceInterface $shares,
-        LlamaParse $llamaParse,
+        IntranetAiGatewayInterface $gateway,
     ): int {
         if (app()->runningUnitTests() && ! config('intranet-app-bewerbungen.lightrag.execute_in_tests')) {
             $this->comment('LightRAG-Testlauf ist in Tests ausgeschaltet.');
@@ -67,7 +67,7 @@ class BewerbungenLightRagIndexCommand extends Command
             }
 
             try {
-                $this->indexBewerbung($instanz, $bewerbungId, $stelle, $bewerbung, $lightRag, $shares, $llamaParse);
+                $this->indexBewerbung($instanz, $bewerbungId, $stelle, $bewerbung, $lightRag, $shares, $gateway);
             } catch (Throwable $exception) {
                 $fehler++;
                 $this->error('Bewerbung '.$bewerbungId.': '.$exception->getMessage());
@@ -96,21 +96,20 @@ class BewerbungenLightRagIndexCommand extends Command
         array $bewerbung,
         LightRagBewerbungenClient $lightRag,
         MsGraphShareServiceInterface $shares,
-        LlamaParse $llamaParse,
+        IntranetAiGatewayInterface $gateway,
     ): void {
         $dateien = array_merge(
             $this->dateien($shares, $bewerbung['cloud_bewerbung_ro'] ?? null, 'bewerbung'),
             $this->dateien($shares, $bewerbung['cloud_anhang_ro'] ?? null, 'anhang'),
         );
 
-        $ocrAktiv = $llamaParse->configured();
         $hochgeladen = [];
         $ausgelassen = [];
         $inhalte = [];
         $ocrDateien = [];
 
         foreach ($dateien as $datei) {
-            if ($ocrAktiv && BewerbungLightRagFiles::needsOcr($datei['name'])) {
+            if (BewerbungLightRagFiles::needsOcr($datei['name'])) {
                 $hochgeladen[] = $datei['name'].' (OCR)';
                 $ocrDateien[] = $datei;
             } elseif (BewerbungLightRagFiles::isDirect($datei['name'])) {
@@ -139,12 +138,35 @@ class BewerbungenLightRagIndexCommand extends Command
         foreach ($ocrDateien as $datei) {
             try {
                 $inhalt = $shares->downloadDriveItemContent($datei['download_url']);
-                $markdown = $llamaParse->parse($inhalt, $datei['name']);
+                $markdown = $this->parseContents($gateway, $inhalt, $datei['name']);
                 $fileSource = BewerbungLightRagFiles::markdownName($bewerbungId, $datei['ordner'], $datei['name']);
                 $textResult = $lightRag->insertText($instanz, '# '.$datei['name']."\n\n".$markdown, $fileSource);
                 $this->line('  '.$datei['name'].' OCR: '.($textResult['already_present'] ? 'bereits vorhanden' : $textResult['track_id']));
             } catch (Throwable $exception) {
                 $this->warn('  '.$datei['name'].' OCR fehlgeschlagen: '.$exception->getMessage());
+            }
+        }
+    }
+
+    private function parseContents(IntranetAiGatewayInterface $gateway, string $contents, string $filename): string
+    {
+        $extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+        $extension = preg_match('/^[a-z0-9]{1,8}$/', $extension) === 1 ? $extension : 'bin';
+        $path = tempnam(sys_get_temp_dir(), 'bewerbung-rag-');
+        if ($path === false) {
+            throw new \RuntimeException('Temporäre Datei konnte nicht angelegt werden.');
+        }
+
+        $filePath = $path.'.'.$extension;
+        rename($path, $filePath);
+
+        try {
+            file_put_contents($filePath, $contents);
+
+            return $gateway->parseAppDocument($filePath, 'bewerbungen');
+        } finally {
+            if (is_file($filePath)) {
+                @unlink($filePath);
             }
         }
     }

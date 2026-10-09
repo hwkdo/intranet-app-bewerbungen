@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace Hwkdo\IntranetAppBewerbungen\Console\Commands;
 
+use Hwkdo\IntranetAppBase\Contracts\DocumentParseConfigResolverInterface;
 use Hwkdo\IntranetAppBase\Contracts\IntranetAiGatewayInterface;
 use Hwkdo\IntranetAppBase\Data\AiRequestContext;
+use Hwkdo\IntranetAppBase\Data\ResolvedDocumentParseConfig;
 use Hwkdo\IntranetAppBase\Enums\AiCapability;
 use Hwkdo\IntranetAppBase\Enums\AiProvider;
+use Hwkdo\IntranetAppBase\Enums\DocumentParseEngine;
 use Hwkdo\IntranetAppBewerbungen\Ai\Agents\BewerbungsAgent;
 use Hwkdo\IntranetAppBewerbungen\Data\AppSettings;
 use Hwkdo\IntranetAppBewerbungen\Enums\BewerbungenAuswertungAiProvider;
@@ -33,7 +36,7 @@ class BewerbungenAuswertenAiCommand extends Command
                             {--modell= : KI-Modell (überschreibt App-Einstellungen und config/ai.php)}
                             {--ohne-zwischenspeicher : Dateien nicht aus dem lokalen Download-Cache laden (Download erfolgt trotzdem und aktualisiert den Cache)}';
 
-    protected $description = 'Wertet Bewerbungen mit laravel/ai aus. Dokumente liest LlamaParse, die Auswertung läuft standardmäßig über Gemma (llama.cpp).';
+    protected $description = 'Wertet Bewerbungen mit laravel/ai aus. Dokumente liest das KI-Gateway, die Auswertung läuft standardmäßig über Gemma (llama.cpp).';
 
     /** @var string[] */
     private const ERLAUBTE_ENDUNGEN = [
@@ -62,10 +65,12 @@ class BewerbungenAuswertenAiCommand extends Command
         'fehler' => 'Fehler',
     ];
 
+    private ?ResolvedDocumentParseConfig $parseConfig = null;
+
     public function __construct(
         private readonly MsGraphShareServiceInterface $shareService,
-        private readonly LlamaParse $llamaParse,
         private readonly IntranetAiGatewayInterface $aiGateway,
+        private readonly DocumentParseConfigResolverInterface $parseConfigResolver,
     ) {
         parent::__construct();
     }
@@ -97,7 +102,8 @@ class BewerbungenAuswertenAiCommand extends Command
             $bewerbungen = [$filterId => $bewerbungen[$filterId]];
         }
 
-        if (! $this->llamaParse->configured()) {
+        $this->parseConfig = $this->parseConfigResolver->resolve('bewerbungen');
+        if ($this->parseConfig->engine === DocumentParseEngine::LlamaParse && ! app(LlamaParse::class)->configured()) {
             $this->error('LlamaParse ist nicht konfiguriert. LLAMA_CLOUD_API_KEY fehlt.');
 
             return self::FAILURE;
@@ -306,7 +312,7 @@ class BewerbungenAuswertenAiCommand extends Command
                     $this->statusZeile("  <fg=blue>    </> [{$index}/{$fortschrittDenominator}] {$dateiName} – gespeichert unter Zwischenspeicher");
                 }
 
-                $text = $this->liesMitLlamaParse($lokalPfad, $cachePfad, $dateiName, $index, $fortschrittDenominator);
+                $text = $this->liesDokument($lokalPfad, $cachePfad, $dateiName, $index, $fortschrittDenominator);
                 $bewertung = ExtraktionsTextValidator::bewerten($text);
 
                 if ($bewertung->istPlausibel) {
@@ -362,25 +368,26 @@ class BewerbungenAuswertenAiCommand extends Command
         }
     }
 
-    private function liesMitLlamaParse(
+    private function liesDokument(
         string $lokalPfad,
         string $cachePfad,
         string $dateiName,
         int $index,
         int $fortschrittDenominator,
     ): string {
-        $markdownPfad = $cachePfad.'.md';
+        $config = $this->parseConfig ?? $this->parseConfigResolver->resolve('bewerbungen');
+        $markdownPfad = $cachePfad.'.parse-'.$config->engine->value.'-'.$config->llamaParseTier.'.md';
         $nutzeCache = ! $this->option('ohne-zwischenspeicher') && is_file($markdownPfad);
+        $motor = $config->engine->label();
 
         if ($nutzeCache) {
-            $this->statusZeile("  <fg=magenta>    ⊙</> [{$index}/{$fortschrittDenominator}] {$dateiName} – LlamaParse-Text aus Zwischenspeicher");
+            $this->statusZeile("  <fg=magenta>    ⊙</> [{$index}/{$fortschrittDenominator}] {$dateiName} – {$motor}-Text aus Zwischenspeicher");
 
             return file_get_contents($markdownPfad) ?: '';
         }
 
-        $this->statusZeile("  <fg=blue>    </> [{$index}/{$fortschrittDenominator}] {$dateiName} – LlamaParse liest die Datei …");
-        $inhalt = file_get_contents($lokalPfad);
-        $text = $this->llamaParse->parse(is_string($inhalt) ? $inhalt : '', $dateiName);
+        $this->statusZeile("  <fg=blue>    </> [{$index}/{$fortschrittDenominator}] {$dateiName} – {$motor} liest die Datei …");
+        $text = $this->aiGateway->parseAppDocument($lokalPfad, 'bewerbungen');
         $this->atomarSchreiben($markdownPfad, $text);
 
         return $text;

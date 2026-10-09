@@ -5,13 +5,18 @@ declare(strict_types=1);
 namespace Hwkdo\IntranetAppBewerbungen\Data;
 
 use Hwkdo\IntranetAppBase\Contracts\HasAiSettings;
+use Hwkdo\IntranetAppBase\Contracts\HasDocumentParseSettings;
 use Hwkdo\IntranetAppBase\Data\Attributes\Description;
 use Hwkdo\IntranetAppBase\Data\BaseAppSettings;
 use Hwkdo\IntranetAppBase\Enums\AiProvider;
+use Hwkdo\IntranetAppBase\Enums\DocumentParseEngine;
+use Hwkdo\IntranetAppBase\Traits\HasDocumentParseSettingsFields;
 use Hwkdo\IntranetAppBewerbungen\Enums\BewerbungenAuswertungAiProvider;
 
-class AppSettings extends BaseAppSettings implements HasAiSettings
+class AppSettings extends BaseAppSettings implements HasAiSettings, HasDocumentParseSettings
 {
+    use HasDocumentParseSettingsFields;
+
     public function __construct(
         #[Description('KI-Backend für den Artisan-Befehl bewerbungen:auswerten-ai (Laravel-AI-Provider-Name)')]
         public BewerbungenAuswertungAiProvider $bewerbungenAuswertungAiProvider = BewerbungenAuswertungAiProvider::GemmaLlamaCpp,
@@ -48,6 +53,12 @@ class AppSettings extends BaseAppSettings implements HasAiSettings
 
         #[Description('Liste der erlaubten Bereiche')]
         public array $allowedAreas = ['public', 'private'],
+
+        #[Description('Document-Parsing-Motor überschreiben (leer = Intranet-Base-Default)')]
+        public ?DocumentParseEngine $documentParseEngineOverride = DocumentParseEngine::LlamaParse,
+
+        #[Description('LlamaParse-Tier überschreiben (leer = Intranet-Base-Default)')]
+        public ?string $documentParseTierOverride = 'agentic',
     ) {}
 
     public function textProviderOverride(): ?AiProvider

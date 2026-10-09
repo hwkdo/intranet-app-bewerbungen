@@ -25,11 +25,18 @@ state(['activeTab' => 'hintergrundbild']);
         </flux:tab.panel>
 
         <flux:tab.panel name="einstellungen">
-            <div style="min-height: 400px;">
+            <div class="min-h-[400px] space-y-4">
+                @livewire('intranet-app-base::document-parse-settings', [
+                    'appIdentifier' => 'bewerbungen',
+                    'settingsModelClass' => \Hwkdo\IntranetAppBewerbungen\Models\IntranetAppBewerbungenSettings::class,
+                    'appSettingsClass' => \Hwkdo\IntranetAppBewerbungen\Data\AppSettings::class,
+                ])
+
                 @livewire('intranet-app-base::admin-settings', [
                     'appIdentifier' => 'bewerbungen',
                     'settingsModelClass' => '\Hwkdo\IntranetAppBewerbungen\Models\IntranetAppBewerbungenSettings',
-                    'appSettingsClass' => '\Hwkdo\IntranetAppBewerbungen\Data\AppSettings'
+                    'appSettingsClass' => '\Hwkdo\IntranetAppBewerbungen\Data\AppSettings',
+                    'excludedKeys' => ['documentParseEngineOverride', 'documentParseTierOverride'],
                 ])
             </div>
         </flux:tab.panel>
