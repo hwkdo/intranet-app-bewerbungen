@@ -35,7 +35,9 @@ class TestDefinitionJob implements ShouldQueue
         public string $name,
         public string $instruktionen,
         public array $felder,
-    ) {}
+    ) {
+        $this->onQueue('bewerbungen-ki');
+    }
 
     public static function cacheKey(string $token): string
     {

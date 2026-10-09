@@ -31,7 +31,7 @@ class LegacyBewerbungenAiController
 
         $data = $validator->validated();
 
-        AnalyzeLegacyBewerbungJob::dispatch($data)->onQueue('default');
+        AnalyzeLegacyBewerbungJob::dispatch($data);
 
         return response()->json([
             'status' => 'queued',

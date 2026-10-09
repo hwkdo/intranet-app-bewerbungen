@@ -33,7 +33,9 @@ class AnalyzeLegacyBewerbungJob implements ShouldQueue
      */
     public function __construct(
         public array $payload
-    ) {}
+    ) {
+        $this->onQueue('bewerbungen-ki');
+    }
 
     public function handle(
         LegacyBewerbungenAiCallbackService $callbackService,
