@@ -54,7 +54,9 @@ class LlamaCppSlotClient
             'anfragen_verarbeitung' => null,
             'anfragen_zurueckgestellt' => null,
             'generierung_durchschnitt' => null,
+            'generierung_gemeldet_at' => null,
             'prompt_durchschnitt' => null,
+            'prompt_gemeldet_at' => null,
             'spec_akzeptanz_prozent' => null,
             'slots' => [],
             'hinweis' => null,
@@ -118,7 +120,9 @@ class LlamaCppSlotClient
         $ergebnis['anfragen_verarbeitung'] = $metrics['anfragen_verarbeitung'] ?? null;
         $ergebnis['anfragen_zurueckgestellt'] = $metrics['anfragen_zurueckgestellt'] ?? null;
         $ergebnis['generierung_durchschnitt'] = $metrics['generierung_durchschnitt'] ?? null;
+        $ergebnis['generierung_gemeldet_at'] = $metrics['generierung_gemeldet_at'] ?? null;
         $ergebnis['prompt_durchschnitt'] = $metrics['prompt_durchschnitt'] ?? null;
+        $ergebnis['prompt_gemeldet_at'] = $metrics['prompt_gemeldet_at'] ?? null;
         $ergebnis['spec_akzeptanz_prozent'] = $metrics['spec_akzeptanz_prozent'] ?? null;
         $ergebnis['modell'] = $modell;
         $ergebnis['slots_gesamt'] = count($slots);
@@ -220,6 +224,10 @@ class LlamaCppSlotClient
     }
 
     /**
+     * llama.cpp setzt die Gauges predicted_tokens_seconds und prompt_tokens_seconds bei jedem
+     * /metrics-Abruf zurück. Ein Wert über 0 steht nur, wenn zwischen zwei Abrufen ein Request
+     * fertig wurde. Deshalb bleibt der letzte Wert über 0 samt Zeitpunkt erhalten.
+     *
      * @return array<string, mixed>
      */
     private function metriken(string $basis, string $key): array
@@ -248,9 +256,11 @@ class LlamaCppSlotClient
         $prompt = $werte['llamacpp:prompt_tokens_seconds'] ?? null;
         if (is_float($generierung) && $generierung > 0) {
             $gemerkt['generierung'] = round($generierung, 1);
+            $gemerkt['generierung_at'] = now()->toIso8601String();
         }
         if (is_float($prompt) && $prompt > 0) {
             $gemerkt['prompt'] = round($prompt, 1);
+            $gemerkt['prompt_at'] = now()->toIso8601String();
         }
         Cache::put(self::GAUGE_KEY, $gemerkt, now()->addHour());
 
@@ -267,7 +277,9 @@ class LlamaCppSlotClient
             'anfragen_verarbeitung' => $this->ganzzahl($werte['llamacpp:requests_processing'] ?? null),
             'anfragen_zurueckgestellt' => $this->ganzzahl($werte['llamacpp:requests_deferred'] ?? null),
             'generierung_durchschnitt' => $gemerkt['generierung'] ?? null,
+            'generierung_gemeldet_at' => $gemerkt['generierung_at'] ?? null,
             'prompt_durchschnitt' => $gemerkt['prompt'] ?? null,
+            'prompt_gemeldet_at' => $gemerkt['prompt_at'] ?? null,
             'spec_akzeptanz_prozent' => $akzeptanz,
         ];
     }

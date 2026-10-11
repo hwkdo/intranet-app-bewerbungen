@@ -4,19 +4,26 @@ declare(strict_types=1);
 
 namespace Hwkdo\IntranetAppBewerbungen\Services;
 
+use Hwkdo\IntranetAppBase\Contracts\AiConfigResolverInterface;
 use Hwkdo\IntranetAppBase\Contracts\DocumentParseConfigResolverInterface;
 use Hwkdo\IntranetAppBase\Contracts\IntranetAiGatewayInterface;
 use Hwkdo\IntranetAppBase\Data\AiRequestContext;
+use Hwkdo\IntranetAppBase\Data\DocumentParseOptions;
+use Hwkdo\IntranetAppBase\Data\ResolvedAiConfig;
 use Hwkdo\IntranetAppBase\Data\ResolvedDocumentParseConfig;
 use Hwkdo\IntranetAppBase\Enums\AiCapability;
+use Hwkdo\IntranetAppBase\Enums\AiConfigSource;
 use Hwkdo\IntranetAppBase\Enums\AiProvider;
+use Hwkdo\IntranetAppBase\Enums\DocumentParseEngine;
 use Hwkdo\IntranetAppBewerbungen\Ai\Agents\DefinitionsAgent;
+use Hwkdo\IntranetAppBewerbungen\Data\AnalyseOverrides;
 use Hwkdo\IntranetAppBewerbungen\Enums\BewerbungenAuswertungAiProvider;
 use Hwkdo\IntranetAppBewerbungen\Models\IntranetAppBewerbungenSettings;
 use Hwkdo\IntranetAppBewerbungen\Models\KiDefinition;
 use Hwkdo\IntranetAppBewerbungen\Support\AnalyseLaufProtokoll;
 use Hwkdo\IntranetAppBewerbungen\Support\ExtraktionsTextValidator;
 use Hwkdo\IntranetAppBewerbungen\Support\KiErgebnisEnvelope;
+use Hwkdo\IntranetAppBewerbungen\Support\LlmMetrikSammler;
 use Hwkdo\MsGraphLaravel\Interfaces\MsGraphShareServiceInterface;
 use Illuminate\Support\Facades\File;
 
@@ -30,10 +37,23 @@ class BewerbungAnalyseService
 
     private ?ResolvedDocumentParseConfig $parseConfig = null;
 
+    private ?ResolvedAiConfig $visionAufloesung = null;
+
+    private ?string $extraktionsHinweis = null;
+
+    private ?AnalyseOverrides $laufOverrides = null;
+
+    private bool $parseErzwungen = false;
+
+    private bool $promptGekuerzt = false;
+
+    private ?AnalyseLaufProtokoll $aktivesProtokoll = null;
+
     public function __construct(
         private readonly MsGraphShareServiceInterface $shareService,
         private readonly IntranetAiGatewayInterface $aiGateway,
         private readonly DocumentParseConfigResolverInterface $parseConfigResolver,
+        private readonly AiConfigResolverInterface $aiConfigResolver,
     ) {}
 
     /**
@@ -49,11 +69,14 @@ class BewerbungAnalyseService
         bool $ohneCache = false,
         ?callable $status = null,
         ?AnalyseLaufProtokoll $protokoll = null,
+        ?AnalyseOverrides $overrides = null,
     ): array {
         $bewerbungRo = (string) ($links['bewerbung_ro'] ?? '');
         if ($bewerbungRo === '') {
             throw new \InvalidArgumentException('Kein Bewerbungslink vorhanden.');
         }
+
+        $this->laufVorbereiten($overrides, $protokoll, $modell);
 
         $this->statusZeile($status, '  <fg=blue>→</> Schritt 1/4: Warte auf API – Bewerbungsordner (Graph) …');
         $bewerbungDateien = $this->messen($protokoll, 'graph', 'Lade Bewerbungsordner (Graph)', fn () => $this->shareService->getSharedFolderContents($bewerbungRo));
@@ -77,8 +100,9 @@ class BewerbungAnalyseService
             $protokoll?->schritt('graph', 'Kein Anhangsordner');
         }
 
-        $this->statusZeile($status, '  <fg=blue>→</> Schritt 3/4: Dateien laden / aus Zwischenspeicher lesen und Text extrahieren …');
-        $protokoll?->schritt('extraktion', 'Dateien laden und Text extrahieren');
+        $hinweis = $this->extraktionsHinweis();
+        $this->statusZeile($status, '  <fg=blue>→</> Schritt 3/4: Dateien laden / aus Zwischenspeicher lesen und Text extrahieren mit '.$hinweis.' …');
+        $protokoll?->schritt('extraktion', 'Dateien laden und Text extrahieren mit '.$hinweis);
         $cacheId = hash('sha256', $bewerbungRo.'|'.(string) $anhangRo);
         $bewerbungTexte = $this->extrahiereDateiTexte($bewerbungDateien, $cacheId, 'bewerbung', $ohneCache, $status, $protokoll);
         $anhangTexte = $this->extrahiereDateiTexte($anhangDateien, $cacheId, 'anhang', $ohneCache, $status, $protokoll);
@@ -158,35 +182,52 @@ class BewerbungAnalyseService
             $nutzeCache = ! $ohneCache && is_file($cachePfad);
 
             try {
+                $graphMs = 0;
                 if ($nutzeCache) {
                     $this->statusZeile($status, "  <fg=magenta>    ⊙</> [{$index}/{$fortschrittDenominator}] {$dateiName} – aus Zwischenspeicher (kein Download)");
                     $protokoll?->schritt('extraktion', "{$dateiName} aus Zwischenspeicher ({$index}/{$fortschrittDenominator})");
                     $lokalPfad = $cachePfad;
                 } else {
                     $this->statusZeile($status, "  <fg=blue>    ↓</> [{$index}/{$fortschrittDenominator}] {$dateiName} – Warte auf Download (Graph) …");
+                    $graphStart = microtime(true);
                     $inhalt = $this->messen(
                         $protokoll,
                         'graph',
                         "Lade {$dateiName} ({$index}/{$fortschrittDenominator})",
                         fn () => $this->shareService->downloadDriveItemContent($downloadUrl),
                     );
+                    $graphMs = (int) round((microtime(true) - $graphStart) * 1000);
                     $this->atomarSchreiben($cachePfad, $inhalt);
                     $lokalPfad = $cachePfad;
                     $this->statusZeile($status, "  <fg=blue>    </> [{$index}/{$fortschrittDenominator}] {$dateiName} – gespeichert unter Zwischenspeicher");
                 }
 
+                $extraktionStart = microtime(true);
                 $text = $this->messen(
                     $protokoll,
                     'extraktion',
-                    "Extrahiere Text aus {$dateiName} ({$index}/{$fortschrittDenominator})",
+                    "Extrahiere Text aus {$dateiName} ({$index}/{$fortschrittDenominator}) mit ".$this->extraktionsHinweis(),
                     fn () => $this->liesDokument($lokalPfad, $cachePfad, (string) $dateiName, $index, $fortschrittDenominator, $ohneCache, $status),
                 );
+                $extraktionMs = (int) round((microtime(true) - $extraktionStart) * 1000);
                 $bewertung = ExtraktionsTextValidator::bewerten($text);
+                $verwendet = $bewertung->istPlausibel && trim($text) !== '';
+                $protokoll?->dokument([
+                    'name' => (string) $dateiName,
+                    'quelle' => $typ,
+                    'aus_cache' => $nutzeCache,
+                    'zeichen' => strlen($text),
+                    'plausibel' => $bewertung->istPlausibel,
+                    'qualitaet' => $bewertung->beschreibung,
+                    'graph_ms' => $graphMs,
+                    'extraktion_ms' => $extraktionMs,
+                    'verwendet' => $verwendet,
+                ]);
                 $this->statusZeile($status, $bewertung->istPlausibel
                     ? "  <fg=green>    ℹ</> Qualität: {$bewertung->beschreibung}"
                     : "  <fg=yellow>    ℹ</> Qualität: {$bewertung->beschreibung}");
 
-                if ($bewertung->istPlausibel && trim($text) !== '') {
+                if ($verwendet) {
                     $this->statusZeile($status, '  <fg=green>    ✓</> '.$dateiName.' ('.strlen($text).' Zeichen, für KI verwendet)');
                     $texte[(string) $dateiName] = $text;
                 } else {
@@ -194,6 +235,12 @@ class BewerbungAnalyseService
                 }
             } catch (\Throwable $e) {
                 $this->statusZeile($status, "  <fg=red>    ✗</> {$dateiName}: ".$e->getMessage());
+                $protokoll?->dokument([
+                    'name' => (string) $dateiName,
+                    'quelle' => $typ,
+                    'qualitaet' => $e->getMessage(),
+                    'verwendet' => false,
+                ]);
             }
         }
 
@@ -255,16 +302,29 @@ class BewerbungAnalyseService
     ): string {
         $config = $this->parseConfig ??= $this->parseConfigResolver->resolve('bewerbungen');
         $markdownPfad = $cachePfad.'.parse-'.$config->engine->value.'-'.$config->llamaParseTier.'.md';
-        $motor = $config->engine->label();
+        $hinweis = $this->extraktionsHinweis();
 
         if (! $ohneCache && is_file($markdownPfad)) {
-            $this->statusZeile($status, "  <fg=magenta>    ⊙</> [{$index}/{$fortschrittDenominator}] {$dateiName} – {$motor}-Text aus Zwischenspeicher");
+            $this->statusZeile($status, "  <fg=magenta>    ⊙</> [{$index}/{$fortschrittDenominator}] {$dateiName} – {$hinweis}, Text aus Zwischenspeicher");
 
             return file_get_contents($markdownPfad) ?: '';
         }
 
-        $this->statusZeile($status, "  <fg=blue>    </> [{$index}/{$fortschrittDenominator}] {$dateiName} – {$motor} liest die Datei …");
-        $text = $this->aiGateway->parseAppDocument($lokalPfad, 'bewerbungen');
+        $this->statusZeile($status, "  <fg=blue>    </> [{$index}/{$fortschrittDenominator}] {$dateiName} – {$hinweis} liest die Datei …");
+        $text = $this->parseErzwungen
+            ? $this->aiGateway->parseDocument(
+                $lokalPfad,
+                $config->engine,
+                new AiRequestContext(
+                    appIdentifier: 'bewerbungen',
+                    capability: $config->engine === DocumentParseEngine::Vision ? AiCapability::Vision : AiCapability::Text,
+                ),
+                new DocumentParseOptions(
+                    llamaParseTier: $config->llamaParseTier,
+                    maxVisionPages: max(1, (int) config('ocr.max_vision_pdf_pages', 30)),
+                ),
+            )
+            : $this->aiGateway->parseAppDocument($lokalPfad, 'bewerbungen');
         $this->atomarSchreiben($markdownPfad, $text);
 
         return $text;
@@ -284,6 +344,13 @@ class BewerbungAnalyseService
         $hinweise = collect($definition->kiFelder())
             ->map(fn ($feld): string => '- "'.$feld->key.'": '.($feld->hinweis !== '' ? $feld->hinweis : $feld->label))
             ->implode("\n");
+
+        $this->aktivesProtokoll?->promptSetzen([
+            'zeichen' => mb_strlen($dokumentenText),
+            'dokumente' => count($texte),
+            'gekuerzt' => $this->promptGekuerzt,
+            'grenze' => max(1, (int) config('intranet-app-bewerbungen.ai.max_dokument_zeichen', 150_000)),
+        ]);
 
         return <<<PROMPT
 Analysiere die folgenden Bewerbungsunterlagen und extrahiere die angeforderten Informationen.
@@ -308,6 +375,7 @@ PROMPT;
     private function dokumentenText(array $texte, array $anhangNamen, ?callable $status): string
     {
         $grenze = max(1, (int) config('intranet-app-bewerbungen.ai.max_dokument_zeichen', 150_000));
+        $this->promptGekuerzt = false;
         $abschnitte = [];
         $verwendet = 0;
         $gekuerzt = false;
@@ -335,6 +403,7 @@ PROMPT;
 
         $dokumentenText = implode("\n\n", $abschnitte);
         if ($gekuerzt) {
+            $this->promptGekuerzt = true;
             $this->statusZeile($status, '  <fg=yellow>    ⚠</> Unterlagen gekürzt: sie überschreiten '.$grenze.' Zeichen (Gemma-Kontextfenster).');
             $dokumentenText .= "\n\n[Hinweis: Weitere Unterlagen wurden gekürzt, weil sie das Kontextfenster des Modells überschreiten.]";
         }
@@ -349,24 +418,110 @@ PROMPT;
     {
         $appSettings = IntranetAppBewerbungenSettings::resolvedAppSettings();
         $kiProvider = $appSettings->bewerbungenAuswertungAiProvider;
-        $this->pruefeProvider($kiProvider);
+        $provider = $this->laufOverrides?->provider ?? $this->mapKiProvider($kiProvider);
+        $modellOverride = $this->laufOverrides?->modell ?? $modell;
 
-        $structured = $this->aiGateway->agent(
-            new DefinitionsAgent($definition),
-            $prompt,
-            new AiRequestContext(
-                appIdentifier: 'bewerbungen',
-                capability: AiCapability::Agent,
-                providerOverride: $this->mapKiProvider($kiProvider),
-                modelOverride: $modell,
-            ),
-        );
+        if ($this->laufOverrides?->provider !== null) {
+            $this->pruefeSchluessel($provider);
+        } else {
+            $this->pruefeProvider($kiProvider);
+        }
+
+        $agent = new DefinitionsAgent($definition);
+        $sammler = new LlmMetrikSammler($agent);
+
+        try {
+            $structured = $this->aiGateway->agent(
+                $agent,
+                $prompt,
+                new AiRequestContext(
+                    appIdentifier: 'bewerbungen',
+                    capability: AiCapability::Agent,
+                    providerOverride: $provider,
+                    modelOverride: $modellOverride,
+                ),
+            );
+        } finally {
+            $this->aktivesProtokoll?->llmSetzen($sammler->schliessen());
+        }
 
         if (! is_array($structured)) {
             throw new \RuntimeException('KI-Antwort enthält keine strukturierten Daten.');
         }
 
         return $structured;
+    }
+
+    private function laufVorbereiten(?AnalyseOverrides $overrides, ?AnalyseLaufProtokoll $protokoll, ?string $modell): void
+    {
+        $this->parseConfig = null;
+        $this->visionAufloesung = null;
+        $this->extraktionsHinweis = null;
+        $this->promptGekuerzt = false;
+        $this->aktivesProtokoll = $protokoll;
+        $this->laufOverrides = $overrides;
+        $this->parseErzwungen = false;
+
+        if ($overrides instanceof AnalyseOverrides && $overrides->engine instanceof DocumentParseEngine) {
+            $tier = $overrides->tier;
+            if ($tier === null || $tier === '') {
+                $tier = $this->parseConfigResolver->resolve('bewerbungen')->llamaParseTier;
+            }
+
+            $this->parseConfig = new ResolvedDocumentParseConfig(
+                engine: $overrides->engine,
+                llamaParseTier: $tier,
+                source: AiConfigSource::AppOverride,
+            );
+            $this->parseErzwungen = true;
+        }
+
+        $this->vorgabenProtokollieren($modell);
+    }
+
+    private function vorgabenProtokollieren(?string $modell): void
+    {
+        if (! $this->aktivesProtokoll instanceof AnalyseLaufProtokoll) {
+            return;
+        }
+
+        $config = $this->parseConfig ??= $this->parseConfigResolver->resolve('bewerbungen');
+        $parseProvider = null;
+        $parseModell = null;
+        if ($config->engine === DocumentParseEngine::Vision) {
+            $vision = $this->visionAufloesung();
+            $parseProvider = $vision->provider->label();
+            $parseModell = is_string($vision->model) ? trim($vision->model) : '';
+            $parseModell = $parseModell !== '' ? $parseModell : null;
+        }
+
+        $this->aktivesProtokoll->parseSetzen(
+            $config->engine->value,
+            $config->engine === DocumentParseEngine::LlamaParse ? $config->llamaParseTier : null,
+            $parseProvider,
+            $parseModell,
+        );
+
+        $settings = IntranetAppBewerbungenSettings::resolvedAppSettings();
+        $textProvider = $this->laufOverrides?->provider ?? $this->mapKiProvider($settings->bewerbungenAuswertungAiProvider);
+        $textModell = trim((string) ($this->laufOverrides?->modell ?? $modell ?? ''));
+        if ($textModell === '') {
+            $textModell = (string) ($settings->textModelOverride() ?? '');
+        }
+
+        $this->aktivesProtokoll->textPlanen($textProvider->value, $textModell !== '' ? $textModell : null);
+    }
+
+    private function visionAufloesung(): ResolvedAiConfig
+    {
+        return $this->visionAufloesung ??= $this->aiConfigResolver->resolve('bewerbungen', AiCapability::Vision);
+    }
+
+    private function pruefeSchluessel(AiProvider $provider): void
+    {
+        if (trim((string) config('ai.providers.'.$provider->value.'.key', '')) === '') {
+            throw new \RuntimeException($provider->label().' ist gewählt, aber der API-Key fehlt.');
+        }
     }
 
     private function pruefeProvider(BewerbungenAuswertungAiProvider $kiProvider): void
@@ -380,6 +535,50 @@ PROMPT;
             && trim((string) config('services.langdock.api_key', '')) === '') {
             throw new \RuntimeException('Langdock ist in den App-Einstellungen gewählt, aber LANGDOCK_API_KEY (services.langdock.api_key) fehlt.');
         }
+    }
+
+    private function extraktionsHinweis(): string
+    {
+        if ($this->extraktionsHinweis !== null) {
+            return $this->extraktionsHinweis;
+        }
+
+        $config = $this->parseConfig ??= $this->parseConfigResolver->resolve('bewerbungen');
+        $this->aktivesProtokoll?->parseSetzen($config->engine->value, $config->llamaParseTier);
+
+        $this->extraktionsHinweis = match ($config->engine) {
+            DocumentParseEngine::LlamaParse => 'LlamaParse, Tier '.$this->llamaParseTierLabel($config->llamaParseTier),
+            DocumentParseEngine::Vision => $this->visionHinweis(),
+            DocumentParseEngine::PdfToText => 'pdftotext (lokal)',
+            DocumentParseEngine::HwkAdmin => 'HWK Admin',
+        };
+
+        return $this->extraktionsHinweis;
+    }
+
+    private function visionHinweis(): string
+    {
+        $ai = $this->visionAufloesung();
+        $modell = is_string($ai->model) ? trim($ai->model) : '';
+        $seiten = max(1, (int) config('ocr.max_vision_pdf_pages', 30));
+        $teile = ['Vision-OCR', $ai->provider->label()];
+        if ($modell !== '') {
+            $teile[] = $modell;
+        }
+        $teile[] = 'max. '.$seiten.' Seiten';
+
+        return implode(', ', $teile);
+    }
+
+    private function llamaParseTierLabel(string $tier): string
+    {
+        return match ($tier) {
+            'fast' => 'Fast',
+            'cost_effective' => 'Cost Effective',
+            'agentic' => 'Agentic',
+            'agentic_plus' => 'Agentic Plus',
+            default => $tier,
+        };
     }
 
     private function mapKiProvider(BewerbungenAuswertungAiProvider $provider): AiProvider

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Hwkdo\IntranetAppBewerbungen\Support;
 
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
 use Throwable;
 
@@ -21,6 +22,8 @@ final class AnalyseLaufProtokoll
 
     private const MAX_SCHRITTE = 40;
 
+    private const MAX_DOKUMENTE = 50;
+
     private const MAX_RECENT = 20;
 
     /** @var array<string, mixed> */
@@ -34,7 +37,7 @@ final class AnalyseLaufProtokoll
     }
 
     /**
-     * @param  array{bewerbung_id?:int|null,stelle_id?:int|null,definition_id?:int|null,quelle?:string,queue_wait_ms?:int|null}  $meta
+     * @param  array{bewerbung_id?:int|null,stelle_id?:int|null,definition_id?:int|null,quelle?:string,queue_wait_ms?:int|null,test_label?:string|null,test_name?:string|null}  $meta
      */
     public function starten(array $meta): void
     {
@@ -44,10 +47,17 @@ final class AnalyseLaufProtokoll
             'stelle_id' => isset($meta['stelle_id']) ? (int) $meta['stelle_id'] : null,
             'definition_id' => isset($meta['definition_id']) ? (int) $meta['definition_id'] : null,
             'quelle' => $meta['quelle'] ?? 'stelle',
+            'test_label' => isset($meta['test_label']) && is_string($meta['test_label']) && $meta['test_label'] !== '' ? $meta['test_label'] : null,
+            'test_name' => isset($meta['test_name']) && is_string($meta['test_name']) && $meta['test_name'] !== '' ? $meta['test_name'] : null,
             'status' => 'running',
             'phase' => 'queue',
+            'phase_seit' => now()->toIso8601String(),
             'schritt' => 'Job angenommen',
             'schritte' => [],
+            'dokumente' => [],
+            'prompt' => null,
+            'llm' => null,
+            'parse' => null,
             'queue_wait_ms' => $meta['queue_wait_ms'] ?? null,
             'graph_ms' => 0,
             'extraktion_ms' => 0,
@@ -67,6 +77,9 @@ final class AnalyseLaufProtokoll
             $this->laden();
         }
 
+        if (($this->state['phase'] ?? null) !== $phase || ! isset($this->state['phase_seit'])) {
+            $this->state['phase_seit'] = now()->toIso8601String();
+        }
         $this->state['phase'] = $phase;
         $this->state['schritt'] = $this->bereinigen($text);
         $schritte = $this->state['schritte'] ?? [];
@@ -100,8 +113,169 @@ final class AnalyseLaufProtokoll
         }
 
         $this->state[$feld] = (int) ($this->state[$feld] ?? 0) + max(0, $ms);
+        if (($this->state['phase'] ?? null) !== $phase || ! isset($this->state['phase_seit'])) {
+            $this->state['phase_seit'] = now()->toIso8601String();
+        }
         $this->state['phase'] = $phase;
         $this->persist();
+    }
+
+    /**
+     * @param  array{name?:string,quelle?:string,aus_cache?:bool,zeichen?:int,plausibel?:bool,qualitaet?:string,graph_ms?:int,extraktion_ms?:int,verwendet?:bool}  $info
+     */
+    public function dokument(array $info): void
+    {
+        if ($this->state === []) {
+            $this->laden();
+        }
+
+        $dokumente = is_array($this->state['dokumente'] ?? null) ? $this->state['dokumente'] : [];
+        $dokumente[] = [
+            'name' => mb_substr((string) ($info['name'] ?? ''), 0, 180),
+            'quelle' => (string) ($info['quelle'] ?? ''),
+            'aus_cache' => (bool) ($info['aus_cache'] ?? false),
+            'zeichen' => (int) ($info['zeichen'] ?? 0),
+            'plausibel' => (bool) ($info['plausibel'] ?? false),
+            'qualitaet' => $this->bereinigen((string) ($info['qualitaet'] ?? '')),
+            'graph_ms' => (int) ($info['graph_ms'] ?? 0),
+            'extraktion_ms' => (int) ($info['extraktion_ms'] ?? 0),
+            'verwendet' => (bool) ($info['verwendet'] ?? false),
+        ];
+        if (count($dokumente) > self::MAX_DOKUMENTE) {
+            $dokumente = array_slice($dokumente, -self::MAX_DOKUMENTE);
+        }
+        $this->state['dokumente'] = array_values($dokumente);
+        $this->persist();
+    }
+
+    /**
+     * @param  array{zeichen?:int,dokumente?:int,gekuerzt?:bool,grenze?:int}  $prompt
+     */
+    public function promptSetzen(array $prompt): void
+    {
+        if ($this->state === []) {
+            $this->laden();
+        }
+
+        $this->state['prompt'] = [
+            'zeichen' => (int) ($prompt['zeichen'] ?? 0),
+            'dokumente' => (int) ($prompt['dokumente'] ?? 0),
+            'gekuerzt' => (bool) ($prompt['gekuerzt'] ?? false),
+            'grenze' => (int) ($prompt['grenze'] ?? 0),
+        ];
+        $this->persist();
+    }
+
+    /**
+     * @param  array<string, mixed>  $llm
+     */
+    public function llmSetzen(array $llm): void
+    {
+        if ($this->state === []) {
+            $this->laden();
+        }
+
+        $bisher = is_array($this->state['llm'] ?? null) ? $this->state['llm'] : [];
+        $this->state['llm'] = [
+            'provider' => isset($llm['provider']) && (string) $llm['provider'] !== '' ? (string) $llm['provider'] : ($bisher['provider'] ?? null),
+            'modell' => isset($llm['modell']) && (string) $llm['modell'] !== '' ? (string) $llm['modell'] : ($bisher['modell'] ?? null),
+            'input_tokens' => isset($llm['input_tokens']) ? (int) $llm['input_tokens'] : null,
+            'output_tokens' => isset($llm['output_tokens']) ? (int) $llm['output_tokens'] : null,
+            'tokens_pro_sekunde' => isset($llm['tokens_pro_sekunde']) && is_numeric($llm['tokens_pro_sekunde']) ? (float) $llm['tokens_pro_sekunde'] : null,
+            'prompt_tokens_pro_sekunde' => isset($llm['prompt_tokens_pro_sekunde']) && is_numeric($llm['prompt_tokens_pro_sekunde']) ? (float) $llm['prompt_tokens_pro_sekunde'] : null,
+            'prompt_ms' => isset($llm['prompt_ms']) ? (int) $llm['prompt_ms'] : null,
+        ];
+        $this->persist();
+    }
+
+    public function textPlanen(?string $provider, ?string $modell): void
+    {
+        if ($this->state === []) {
+            $this->laden();
+        }
+
+        $aktuell = is_array($this->state['llm'] ?? null) ? $this->state['llm'] : [];
+        if ($aktuell !== [] && (isset($aktuell['input_tokens']) || isset($aktuell['output_tokens']))) {
+            return;
+        }
+
+        $aktuell['provider'] = $provider;
+        $aktuell['modell'] = $modell;
+        $this->state['llm'] = $aktuell;
+        $this->persist();
+    }
+
+    public function parseSetzen(string $engine, ?string $tier, ?string $provider = null, ?string $modell = null): void
+    {
+        if ($this->state === []) {
+            $this->laden();
+        }
+
+        $bisher = is_array($this->state['parse'] ?? null) ? $this->state['parse'] : [];
+        $this->state['parse'] = [
+            'engine' => $engine,
+            'tier' => $tier,
+            'provider' => $provider ?? ($bisher['provider'] ?? null),
+            'modell' => $modell ?? ($bisher['modell'] ?? null),
+        ];
+        $this->persist();
+    }
+
+    /**
+     * Lauf inklusive abgeschlossener Zustände. Für die Live-Karte nach dem Ende.
+     *
+     * @return array<string, mixed>|null
+     */
+    public static function zustand(string $requestId): ?array
+    {
+        if ($requestId === '') {
+            return null;
+        }
+
+        $state = Cache::get(self::cacheKey($requestId));
+        if (! is_array($state)) {
+            return null;
+        }
+
+        return self::ohneInterneFelder($state);
+    }
+
+    /**
+     * Phasen-ms inklusive der noch laufenden Phase (now − phase_seit).
+     *
+     * @param  array<string, mixed>  $lauf
+     * @return array{ms: array<string, int>, anteile: array<string, float>, summe: int}
+     */
+    public static function liveAnteile(array $lauf): array
+    {
+        $ms = [
+            'queue' => (int) ($lauf['queue_wait_ms'] ?? 0),
+            'graph' => (int) ($lauf['graph_ms'] ?? 0),
+            'extraktion' => (int) ($lauf['extraktion_ms'] ?? 0),
+            'llm' => (int) ($lauf['llm_ms'] ?? 0),
+        ];
+
+        $phase = (string) ($lauf['phase'] ?? '');
+        $seit = $lauf['phase_seit'] ?? null;
+        if (($lauf['status'] ?? '') === 'running' && isset($ms[$phase]) && is_string($seit) && $seit !== '') {
+            $zeit = strtotime($seit);
+            if ($zeit !== false) {
+                $ms[$phase] = max($ms[$phase], (int) round((microtime(true) - $zeit) * 1000));
+            }
+        }
+
+        $summe = array_sum($ms);
+        $teiler = max(1, $summe);
+        $anteile = [];
+        foreach ($ms as $name => $wert) {
+            $anteile[$name] = round($wert / $teiler * 100, 1);
+        }
+
+        return [
+            'ms' => $ms,
+            'anteile' => $anteile,
+            'summe' => $summe,
+        ];
     }
 
     public function abschliessen(string $status, ?string $fehler = null): void
@@ -166,20 +340,44 @@ final class AnalyseLaufProtokoll
         }
 
         $laeufe = [];
-        foreach (array_keys($ids) as $requestId) {
-            if (! is_string($requestId) || $requestId === '') {
+        foreach ($ids as $requestId => $markiert) {
+            if ($markiert === false) {
                 continue;
             }
 
-            $state = Cache::get(self::cacheKey($requestId));
-            if (! is_array($state) || ($state['status'] ?? '') !== 'running') {
+            $requestId = trim((string) $requestId);
+            if ($requestId === '') {
                 continue;
             }
 
-            $laeufe[] = self::ohneInterneFelder($state);
+            $state = self::fuer($requestId);
+            if ($state === null) {
+                continue;
+            }
+
+            $laeufe[] = $state;
         }
 
         return $laeufe;
+    }
+
+    /**
+     * Laufendes Protokoll direkt über den Run-Key, unabhängig von der Active-ID-Liste.
+     *
+     * @return array<string, mixed>|null
+     */
+    public static function fuer(string $requestId): ?array
+    {
+        if ($requestId === '') {
+            return null;
+        }
+
+        $state = Cache::get(self::cacheKey($requestId));
+        if (! is_array($state) || ($state['status'] ?? '') !== 'running') {
+            return null;
+        }
+
+        return self::ohneInterneFelder($state);
     }
 
     /**
@@ -246,9 +444,15 @@ final class AnalyseLaufProtokoll
         };
 
         try {
-            Cache::lock('bewerbungen-ki:active-lock', 5)->block(2, $aendern);
+            Cache::lock('bewerbungen-ki:active-lock', 5)->block(3, $aendern);
+        } catch (LockTimeoutException) {
+            try {
+                Cache::lock('bewerbungen-ki:active-lock', 5)->block(3, $aendern);
+            } catch (LockTimeoutException) {
+                // Die ID-Liste bleibt unverändert. Das Cockpit liest den Lauf über den Run-Key.
+            }
         } catch (Throwable) {
-            $aendern();
+            // Kein Schreiben ohne Lock: sonst überschreibt der zweite Job die ID des ersten.
         }
     }
 

@@ -100,6 +100,83 @@ class KiPipelineMonitor
     }
 
     /**
+     * Engpass und Stufen, ohne Host-Metriken der DGX.
+     *
+     * @return array<string, mixed>
+     */
+    public function lage(): array
+    {
+        $queue = $this->queue->snapshot();
+        $letzte = AnalyseLaufProtokoll::letzte();
+        $llama = $this->llama->snapshot();
+        $worker = $this->worker();
+        $laufende = $this->laufende($queue['reserved_jobs']);
+
+        return [
+            'engpass' => $this->engpass($queue, $laufende, $llama, $worker['max_prozesse']),
+            'stufen' => $this->stufen($queue, $laufende, $letzte),
+            'worker' => $worker,
+            'laufende_anzahl' => count($laufende),
+            'erste_phase' => $laufende[0]['phase'] ?? null,
+            'phasen' => array_map(
+                fn (array $lauf): string => (string) ($lauf['phase'] ?? ''),
+                $laufende,
+            ),
+        ];
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function laufendeListe(): array
+    {
+        $queue = $this->queue->snapshot();
+
+        return $this->laufende($queue['reserved_jobs']);
+    }
+
+    /**
+     * @return array{verfuegbar: bool, hinweis: mixed, pending: int, delayed: int, reserved: int, pending_jobs: mixed}
+     */
+    public function warteschlange(): array
+    {
+        $queue = $this->queue->snapshot();
+
+        return [
+            'verfuegbar' => (bool) ($queue['verfuegbar'] ?? false),
+            'hinweis' => $queue['hinweis'] ?? null,
+            'pending' => (int) ($queue['pending'] ?? 0),
+            'delayed' => (int) ($queue['delayed'] ?? 0),
+            'reserved' => (int) ($queue['reserved'] ?? 0),
+            'pending_jobs' => is_array($queue['pending_jobs'] ?? null) ? $queue['pending_jobs'] : [],
+        ];
+    }
+
+    public function queuePosition(string $token): ?int
+    {
+        if ($token === '') {
+            return null;
+        }
+
+        $jobs = $this->warteschlange()['pending_jobs'];
+        if (! is_array($jobs)) {
+            return null;
+        }
+
+        foreach (array_values($jobs) as $index => $job) {
+            if (! is_array($job)) {
+                continue;
+            }
+
+            if (($job['token'] ?? null) === $token || ($job['request_id'] ?? null) === 'test-'.$token) {
+                return $index + 1;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * @param  array<string, mixed>  $queue
      * @param  list<array<string, mixed>>  $laufende
      * @param  list<array<string, mixed>>  $letzte
@@ -137,22 +214,23 @@ class KiPipelineMonitor
             }
         }
 
-        $liste = [];
-        $gesehen = [];
-        foreach ($reserviert as $job) {
-            $id = (string) ($job['request_id'] ?? '');
-            $aktiv = $id !== '' ? ($protokolle[$id] ?? null) : null;
-            if ($id !== '') {
-                $gesehen[$id] = true;
+        if ($reserviert === []) {
+            $liste = [];
+            foreach ($protokolle as $aktiv) {
+                $liste[] = $this->laufEintrag($aktiv, null);
             }
-            $liste[] = $this->laufEintrag(is_array($aktiv) ? $aktiv : null, $job);
+
+            return $liste;
         }
 
-        foreach ($protokolle as $id => $aktiv) {
-            if (isset($gesehen[$id])) {
-                continue;
+        $liste = [];
+        foreach ($reserviert as $job) {
+            $id = (string) ($job['request_id'] ?? '');
+            $aktiv = null;
+            if ($id !== '') {
+                $aktiv = $protokolle[$id] ?? AnalyseLaufProtokoll::fuer($id);
             }
-            $liste[] = $this->laufEintrag($aktiv, null);
+            $liste[] = $this->laufEintrag(is_array($aktiv) ? $aktiv : null, $job);
         }
 
         return $liste;
@@ -165,11 +243,15 @@ class KiPipelineMonitor
      */
     private function laufEintrag(?array $aktiv, ?array $job): array
     {
+        $job ??= [];
+
         return [
+            'uuid' => $job['uuid'] ?? null,
             'request_id' => $aktiv['request_id'] ?? ($job['request_id'] ?? null),
             'bewerbung_id' => $aktiv['bewerbung_id'] ?? ($job['bewerbung_id'] ?? null),
             'stelle_id' => $aktiv['stelle_id'] ?? ($job['stelle_id'] ?? null),
-            'test_name' => $job['test_name'] ?? null,
+            'test_name' => $job['test_name'] ?? ($aktiv['test_name'] ?? null),
+            'test_label' => $aktiv['test_label'] ?? ($job['test_label'] ?? null),
             'quelle' => $aktiv['quelle'] ?? ($job['quelle'] ?? 'stelle'),
             'phase' => $aktiv['phase'] ?? 'queue',
             'schritt' => $aktiv['schritt'] ?? 'In der Queue reserviert',

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Hwkdo\IntranetAppBewerbungen\Jobs;
 
+use Hwkdo\IntranetAppBewerbungen\Data\AnalyseOverrides;
 use Hwkdo\IntranetAppBewerbungen\Models\KiDefinition;
 use Hwkdo\IntranetAppBewerbungen\Services\BewerbungAnalyseService;
 use Hwkdo\IntranetAppBewerbungen\Support\AnalyseLaufProtokoll;
@@ -36,6 +37,8 @@ class TestDefinitionJob implements ShouldQueue
         public string $name,
         public string $instruktionen,
         public array $felder,
+        public array $overrides = [],
+        public string $label = '',
     ) {
         $this->onQueue('bewerbungen-ki');
     }
@@ -52,18 +55,21 @@ class TestDefinitionJob implements ShouldQueue
             'instruktionen' => $this->instruktionen,
             'felder' => $this->felder,
         ]);
+        $overrides = AnalyseOverrides::fromArray($this->overrides);
 
         $protokoll = new AnalyseLaufProtokoll('test-'.$this->token);
         $protokoll->starten([
             'quelle' => 'test',
             'queue_wait_ms' => $this->wartezeitMs(),
+            'test_label' => $this->label !== '' ? $this->label : null,
+            'test_name' => $this->name,
         ]);
 
         try {
             $result = $analyse->analysiereLinks([
                 'bewerbung_ro' => $this->bewerbungRo,
                 'anhang_ro' => $this->anhangRo,
-            ], $definition, false, protokoll: $protokoll);
+            ], $definition, false, null, $overrides->ohneCache, null, $protokoll, $overrides);
             $protokoll->abschliessen('success');
             Cache::put(self::cacheKey($this->token), [
                 'status' => 'done',

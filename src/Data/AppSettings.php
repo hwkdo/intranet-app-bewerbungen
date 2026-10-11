@@ -59,6 +59,9 @@ class AppSettings extends BaseAppSettings implements HasAiSettings, HasDocumentP
 
         #[Description('LlamaParse-Tier überschreiben (leer = Intranet-Base-Default)')]
         public ?string $documentParseTierOverride = 'agentic',
+
+        #[Description('Maximale Anzahl paralleler Varianten im Definitions-Test')]
+        public int $maxTestVarianten = 4,
     ) {}
 
     public function textProviderOverride(): ?AiProvider
