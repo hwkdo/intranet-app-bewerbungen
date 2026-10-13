@@ -304,7 +304,7 @@ new #[Title('KI-Definition')] class extends Component
                                     <span></span>
                                 </div>
 
-                                <div wire:sort="sortiereFeld" class="space-y-1">
+                                <div wire:sort="sortiereFeld" wire:replace class="flex flex-col gap-1 pb-4">
                                     @foreach ($felder as $index => $feld)
                                         @php
                                             $filter = mb_strtolower(trim(($feld['key'] ?? '').' '.($feld['label'] ?? '')));
