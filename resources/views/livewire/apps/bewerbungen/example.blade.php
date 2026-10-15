@@ -12,7 +12,7 @@ state(['exampleData' => [
 ]]);
 
 ?>
-
+<div>
 <x-intranet-app-bewerbungen::bewerbungen-layout heading="Beispiel-Seite" subheading="Demonstration der Bewerbungen-Funktionalität">
     <flux:card>
         <flux:heading size="lg" class="mb-4">Beispiel-Content</flux:heading>
@@ -43,3 +43,4 @@ state(['exampleData' => [
         </div>
     </flux:card>
 </x-intranet-app-bewerbungen::bewerbungen-layout>
+</div>
