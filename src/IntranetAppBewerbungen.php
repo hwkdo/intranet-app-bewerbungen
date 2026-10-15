@@ -1,10 +1,12 @@
 <?php
 
 namespace Hwkdo\IntranetAppBewerbungen;
+use Hwkdo\IntranetAppBase\Interfaces\ProvidesBackgroundActivitiesInterface;
+use Hwkdo\IntranetAppBewerbungen\Background\BewerbungenBackgroundActivities;
 use Hwkdo\IntranetAppBase\Interfaces\IntranetAppInterface;
 use Illuminate\Support\Collection;
 
-class IntranetAppBewerbungen implements IntranetAppInterface 
+class IntranetAppBewerbungen implements IntranetAppInterface, ProvidesBackgroundActivitiesInterface 
 {
     public static function app_name(): string
     {
@@ -45,4 +47,11 @@ class IntranetAppBewerbungen implements IntranetAppInterface
     {
         return [];
     }
+
+    public static function backgroundActivities(): array
+    {
+        return BewerbungenBackgroundActivities::definitions();
+    }
+
+
 }

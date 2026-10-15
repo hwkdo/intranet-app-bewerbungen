@@ -24,3 +24,9 @@ Route::middleware(['web', 'auth', 'can:manage-app-bewerbungen-definitionen'])->g
     Route::livewire('apps/bewerbungen/definitionen/{definition}', 'intranet-app-bewerbungen::apps.bewerbungen.definitionen.editor')
         ->name('apps.bewerbungen.definitionen.edit');
 });
+
+Route::middleware(['web', 'auth', 'can:manage-app-bewerbungen'])->group(function (): void {
+    Volt::route('apps/bewerbungen/admin/background-activities', 'apps.bewerbungen.admin.background-activities')
+        ->name('apps.bewerbungen.admin.background-activities');
+});
+
