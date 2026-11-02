@@ -19,11 +19,10 @@ return [
         ],
     ],
     /*
-    | KI für bewerbungen:auswerten-ai (Provider + optionale Modell-Overrides in AppSettings → Admin „Bewerbungen“):
-    | - Gemma (llama.cpp): llama_cpp_api_key, Modell gemma-4-26b-a4b(llama-cpp) (config/ai.php → gemma-llama-cpp)
-    | - Open Web UI: OPENWEBUI_*; Modell: AppSettings bewerbungenAuswertungModelOpenWebUi, sonst OPENWEBUI_DEFAULT_MODEL
-    | - Langdock: LANGDOCK_*; Modell: AppSettings bewerbungenAuswertungModelLangdock, sonst BEWERBUNGEN_AI_LANGDOCK_MODEL
-    | Dokumente liest LlamaParse (LLAMA_CLOUD_API_KEY). max_dokument_zeichen begrenzt den gesamten Prompt auf das Gemma-Kontextfenster.
+    | KI für die Auswertung: Admin-Tab „KI“ (Provider + Modell).
+    | Leer beim Modell = Standard des Providers aus config/ai.php.
+    | Bifrost: BIFROST_BASE_URL, BIFROST_VIRTUAL_KEY, BIFROST_DEFAULT_MODEL.
+    | max_dokument_zeichen begrenzt den gesamten Prompt.
     */
     'ai' => [
         'download_cache_path' => env('BEWERBUNGEN_DOWNLOAD_CACHE_PATH', 'bewerbungen_auswertung_cache'),

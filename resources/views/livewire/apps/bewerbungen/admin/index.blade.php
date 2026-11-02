@@ -12,6 +12,7 @@ state(['activeTab' => 'hintergrundbild'])->url(as: 'tab');
     <flux:tab.group>
         <flux:tabs wire:model.live="activeTab">
             <flux:tab name="hintergrundbild" icon="photo">Hintergrundbild</flux:tab>
+            <flux:tab name="ki" icon="sparkles">KI</flux:tab>
             <flux:tab name="einstellungen" icon="cog-6-tooth">Einstellungen</flux:tab>
             <flux:tab name="statistiken" icon="chart-bar">Statistiken</flux:tab>
             <flux:tab name="hintergrund" icon="clock">Hintergrund</flux:tab>
@@ -25,19 +26,38 @@ state(['activeTab' => 'hintergrundbild'])->url(as: 'tab');
             </div>
         </flux:tab.panel>
 
+        <flux:tab.panel name="ki">
+            <div class="min-h-[400px] space-y-4">
+                @if ($activeTab === 'ki')
+                    @livewire('intranet-app-bewerbungen::apps.bewerbungen.admin.ki-einstellungen', key('bewerbungen-admin-ki'))
+
+                    @livewire('intranet-app-base::document-parse-settings', [
+                        'appIdentifier' => 'bewerbungen',
+                        'settingsModelClass' => \Hwkdo\IntranetAppBewerbungen\Models\IntranetAppBewerbungenSettings::class,
+                        'appSettingsClass' => \Hwkdo\IntranetAppBewerbungen\Data\AppSettings::class,
+                    ], key('bewerbungen-admin-parse'))
+                @endif
+            </div>
+        </flux:tab.panel>
+
         <flux:tab.panel name="einstellungen">
             <div class="min-h-[400px] space-y-4">
-                @livewire('intranet-app-base::document-parse-settings', [
-                    'appIdentifier' => 'bewerbungen',
-                    'settingsModelClass' => \Hwkdo\IntranetAppBewerbungen\Models\IntranetAppBewerbungenSettings::class,
-                    'appSettingsClass' => \Hwkdo\IntranetAppBewerbungen\Data\AppSettings::class,
-                ])
-
                 @livewire('intranet-app-base::admin-settings', [
                     'appIdentifier' => 'bewerbungen',
                     'settingsModelClass' => '\Hwkdo\IntranetAppBewerbungen\Models\IntranetAppBewerbungenSettings',
                     'appSettingsClass' => '\Hwkdo\IntranetAppBewerbungen\Data\AppSettings',
-                    'excludedKeys' => ['documentParseEngineOverride', 'documentParseTierOverride'],
+                    'excludedKeys' => [
+                        'bewerbungenAuswertungAiProvider',
+                        'bewerbungenAuswertungModelGemmaLlamaCpp',
+                        'bewerbungenAuswertungModelOpenWebUi',
+                        'bewerbungenAuswertungModelLangdock',
+                        'aiTextProviderOverride',
+                        'aiTextModelOverride',
+                        'aiImageProviderOverride',
+                        'aiImageModelOverride',
+                        'documentParseEngineOverride',
+                        'documentParseTierOverride',
+                    ],
                 ])
             </div>
         </flux:tab.panel>

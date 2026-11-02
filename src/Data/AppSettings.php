@@ -83,6 +83,10 @@ class AppSettings extends BaseAppSettings implements HasAiSettings, HasDocumentP
             return trim($this->aiTextModelOverride);
         }
 
+        if ($this->aiTextProviderOverride !== null) {
+            return null;
+        }
+
         $legacy = match ($this->bewerbungenAuswertungAiProvider) {
             BewerbungenAuswertungAiProvider::GemmaLlamaCpp => $this->bewerbungenAuswertungModelGemmaLlamaCpp,
             BewerbungenAuswertungAiProvider::OpenWebUi => $this->bewerbungenAuswertungModelOpenWebUi,

@@ -4,11 +4,10 @@ declare(strict_types=1);
 
 namespace Hwkdo\IntranetAppBewerbungen\Console\Commands;
 
+use Hwkdo\IntranetAppBase\Contracts\AiConfigResolverInterface;
 use Hwkdo\IntranetAppBase\Contracts\DocumentParseConfigResolverInterface;
+use Hwkdo\IntranetAppBase\Enums\AiCapability;
 use Hwkdo\IntranetAppBase\Enums\DocumentParseEngine;
-use Hwkdo\IntranetAppBewerbungen\Data\AppSettings;
-use Hwkdo\IntranetAppBewerbungen\Enums\BewerbungenAuswertungAiProvider;
-use Hwkdo\IntranetAppBewerbungen\Models\IntranetAppBewerbungenSettings;
 use Hwkdo\IntranetAppBewerbungen\Services\BewerbungAnalyseService;
 use Hwkdo\IntranetAppBewerbungen\Support\KiDefinitionResolver;
 use Hwkdo\LlamaParseLaravel\LlamaParse;
@@ -84,17 +83,16 @@ class BewerbungenAuswertenAiCommand extends Command
             return self::FAILURE;
         }
 
-        $cliModell = $this->option('modell') ?: null;
-        $appSettings = IntranetAppBewerbungenSettings::resolvedAppSettings();
-        $auswertungModell = $this->resolveAuswertungModell(is_string($cliModell) ? $cliModell : null, $appSettings);
-        $kiProvider = $appSettings->bewerbungenAuswertungAiProvider;
+        $cliModell = $this->option('modell');
+        $auswertungModell = is_string($cliModell) && trim($cliModell) !== '' ? trim($cliModell) : null;
+        $ki = app(AiConfigResolverInterface::class)->resolve('bewerbungen', AiCapability::Agent);
         $basisname = $this->option('ausgabe') ?? 'bewerbungen_auswertung_ai_'.now()->format('Y-m-d_His');
 
         $this->info('=== Bewerbungen Auswertung (laravel/ai) ===');
         $this->info('Verarbeite '.count($bewerbungen).' Bewerbung(en)');
         $this->info('Definition: '.$aufgeloest['definition']->name.($aufgeloest['fallback'] ? ' (Fallback auf Standard)' : ''));
-        $this->info('KI-Provider: '.BewerbungenAuswertungAiProvider::options()[$kiProvider->value].' ('.$kiProvider->value.')');
-        $this->info('Modell: '.($auswertungModell ?? $this->fallbackModell($kiProvider)));
+        $this->info('KI-Provider: '.$ki->provider->label().' ('.$ki->provider->value.')');
+        $this->info('Modell: '.($auswertungModell ?? $ki->model ?? 'Provider-Standard'));
         $this->newLine();
 
         $ergebnisse = [];
@@ -145,32 +143,6 @@ class BewerbungenAuswertenAiCommand extends Command
         $this->info("Abgeschlossen: {$erfolgreich} von {$gesamtAnzahl} Bewerbungen erfolgreich ausgewertet.");
 
         return self::SUCCESS;
-    }
-
-    private function resolveAuswertungModell(?string $cliModell, AppSettings $appSettings): ?string
-    {
-        if ($cliModell !== null && trim($cliModell) !== '') {
-            return trim($cliModell);
-        }
-
-        $legacy = match ($appSettings->bewerbungenAuswertungAiProvider) {
-            BewerbungenAuswertungAiProvider::GemmaLlamaCpp => $appSettings->bewerbungenAuswertungModelGemmaLlamaCpp,
-            BewerbungenAuswertungAiProvider::OpenWebUi => $appSettings->bewerbungenAuswertungModelOpenWebUi,
-            BewerbungenAuswertungAiProvider::Langdock => $appSettings->bewerbungenAuswertungModelLangdock,
-        };
-
-        $legacy = trim($legacy);
-
-        return $legacy === '' ? null : $legacy;
-    }
-
-    private function fallbackModell(BewerbungenAuswertungAiProvider $provider): string
-    {
-        return match ($provider) {
-            BewerbungenAuswertungAiProvider::GemmaLlamaCpp => (string) config('ai.providers.gemma-llama-cpp.models.text.default'),
-            BewerbungenAuswertungAiProvider::OpenWebUi => (string) config('ai.providers.openwebui.models.text.default'),
-            BewerbungenAuswertungAiProvider::Langdock => (string) config('ai.providers.langdock.models.text.default'),
-        };
     }
 
     private function statusZeile(string $nachricht): void

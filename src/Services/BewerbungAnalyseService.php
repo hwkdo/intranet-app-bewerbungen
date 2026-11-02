@@ -17,8 +17,6 @@ use Hwkdo\IntranetAppBase\Enums\AiProvider;
 use Hwkdo\IntranetAppBase\Enums\DocumentParseEngine;
 use Hwkdo\IntranetAppBewerbungen\Ai\Agents\DefinitionsAgent;
 use Hwkdo\IntranetAppBewerbungen\Data\AnalyseOverrides;
-use Hwkdo\IntranetAppBewerbungen\Enums\BewerbungenAuswertungAiProvider;
-use Hwkdo\IntranetAppBewerbungen\Models\IntranetAppBewerbungenSettings;
 use Hwkdo\IntranetAppBewerbungen\Models\KiDefinition;
 use Hwkdo\IntranetAppBewerbungen\Support\AnalyseLaufProtokoll;
 use Hwkdo\IntranetAppBewerbungen\Support\ExtraktionsTextValidator;
@@ -416,16 +414,16 @@ PROMPT;
      */
     private function auswertungMitKi(string $prompt, KiDefinition $definition, ?string $modell): array
     {
-        $appSettings = IntranetAppBewerbungenSettings::resolvedAppSettings();
-        $kiProvider = $appSettings->bewerbungenAuswertungAiProvider;
-        $provider = $this->laufOverrides?->provider ?? $this->mapKiProvider($kiProvider);
+        $resolved = $this->aiConfigResolver->resolve('bewerbungen', AiCapability::Agent);
+        $provider = $this->laufOverrides?->provider ?? $resolved->provider;
         $modellOverride = $this->laufOverrides?->modell ?? $modell;
-
-        if ($this->laufOverrides?->provider !== null) {
-            $this->pruefeSchluessel($provider);
+        if (! is_string($modellOverride) || trim($modellOverride) === '') {
+            $modellOverride = $resolved->model;
         } else {
-            $this->pruefeProvider($kiProvider);
+            $modellOverride = trim($modellOverride);
         }
+
+        $this->pruefeProviderBereit($provider);
 
         $agent = new DefinitionsAgent($definition);
         $sammler = new LlmMetrikSammler($agent);
@@ -502,11 +500,11 @@ PROMPT;
             $parseModell,
         );
 
-        $settings = IntranetAppBewerbungenSettings::resolvedAppSettings();
-        $textProvider = $this->laufOverrides?->provider ?? $this->mapKiProvider($settings->bewerbungenAuswertungAiProvider);
+        $resolved = $this->aiConfigResolver->resolve('bewerbungen', AiCapability::Agent);
+        $textProvider = $this->laufOverrides?->provider ?? $resolved->provider;
         $textModell = trim((string) ($this->laufOverrides?->modell ?? $modell ?? ''));
         if ($textModell === '') {
-            $textModell = (string) ($settings->textModelOverride() ?? '');
+            $textModell = (string) ($resolved->model ?? '');
         }
 
         $this->aktivesProtokoll->textPlanen($textProvider->value, $textModell !== '' ? $textModell : null);
@@ -517,23 +515,28 @@ PROMPT;
         return $this->visionAufloesung ??= $this->aiConfigResolver->resolve('bewerbungen', AiCapability::Vision);
     }
 
-    private function pruefeSchluessel(AiProvider $provider): void
+    private function pruefeProviderBereit(AiProvider $provider): void
     {
-        if (trim((string) config('ai.providers.'.$provider->value.'.key', '')) === '') {
-            throw new \RuntimeException($provider->label().' ist gewählt, aber der API-Key fehlt.');
-        }
-    }
+        if ($provider === AiProvider::Bifrost) {
+            if (trim((string) config('ai.providers.bifrost.headers.x-bf-vk', '')) === '') {
+                throw new \RuntimeException('Bifrost ist gewählt, aber BIFROST_VIRTUAL_KEY fehlt.');
+            }
 
-    private function pruefeProvider(BewerbungenAuswertungAiProvider $kiProvider): void
-    {
-        if ($kiProvider === BewerbungenAuswertungAiProvider::GemmaLlamaCpp
+            return;
+        }
+
+        if ($provider === AiProvider::OpenWebUi) {
+            return;
+        }
+
+        if ($provider === AiProvider::Langdock
+            && trim((string) config('services.langdock.api_key', '')) === '') {
+            throw new \RuntimeException('Langdock ist gewählt, aber LANGDOCK_API_KEY fehlt.');
+        }
+
+        if ($provider === AiProvider::GemmaLlamaCpp
             && trim((string) config('ai.providers.gemma-llama-cpp.key', '')) === '') {
             throw new \RuntimeException('Gemma ist gewählt, aber llama_cpp_api_key fehlt.');
-        }
-
-        if ($kiProvider === BewerbungenAuswertungAiProvider::Langdock
-            && trim((string) config('services.langdock.api_key', '')) === '') {
-            throw new \RuntimeException('Langdock ist in den App-Einstellungen gewählt, aber LANGDOCK_API_KEY (services.langdock.api_key) fehlt.');
         }
     }
 
@@ -578,15 +581,6 @@ PROMPT;
             'agentic' => 'Agentic',
             'agentic_plus' => 'Agentic Plus',
             default => $tier,
-        };
-    }
-
-    private function mapKiProvider(BewerbungenAuswertungAiProvider $provider): AiProvider
-    {
-        return match ($provider) {
-            BewerbungenAuswertungAiProvider::GemmaLlamaCpp => AiProvider::GemmaLlamaCpp,
-            BewerbungenAuswertungAiProvider::OpenWebUi => AiProvider::OpenWebUi,
-            BewerbungenAuswertungAiProvider::Langdock => AiProvider::Langdock,
         };
     }
 
