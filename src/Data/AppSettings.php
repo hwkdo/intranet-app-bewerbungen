@@ -66,34 +66,18 @@ class AppSettings extends BaseAppSettings implements HasAiSettings, HasDocumentP
 
     public function textProviderOverride(): ?AiProvider
     {
-        if ($this->aiTextProviderOverride !== null) {
-            return $this->aiTextProviderOverride;
-        }
-
-        return match ($this->bewerbungenAuswertungAiProvider) {
-            BewerbungenAuswertungAiProvider::GemmaLlamaCpp => AiProvider::GemmaLlamaCpp,
-            BewerbungenAuswertungAiProvider::OpenWebUi => AiProvider::OpenWebUi,
-            BewerbungenAuswertungAiProvider::Langdock => AiProvider::Langdock,
-        };
+        return $this->aiTextProviderOverride;
     }
 
     public function textModelOverride(): ?string
     {
-        if (is_string($this->aiTextModelOverride) && trim($this->aiTextModelOverride) !== '') {
-            return trim($this->aiTextModelOverride);
-        }
-
-        if ($this->aiTextProviderOverride !== null) {
+        if (! is_string($this->aiTextModelOverride)) {
             return null;
         }
 
-        $legacy = match ($this->bewerbungenAuswertungAiProvider) {
-            BewerbungenAuswertungAiProvider::GemmaLlamaCpp => $this->bewerbungenAuswertungModelGemmaLlamaCpp,
-            BewerbungenAuswertungAiProvider::OpenWebUi => $this->bewerbungenAuswertungModelOpenWebUi,
-            BewerbungenAuswertungAiProvider::Langdock => $this->bewerbungenAuswertungModelLangdock,
-        };
+        $trimmed = trim($this->aiTextModelOverride);
 
-        return trim($legacy) !== '' ? trim($legacy) : null;
+        return $trimmed === '' ? null : $trimmed;
     }
 
     public function imageProviderOverride(): ?AiProvider

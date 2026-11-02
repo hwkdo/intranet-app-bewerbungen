@@ -1,6 +1,8 @@
 <?php
 
+use Hwkdo\IntranetAppBase\Contracts\AiConfigResolverInterface;
 use Hwkdo\IntranetAppBase\Contracts\DocumentParseConfigResolverInterface;
+use Hwkdo\IntranetAppBase\Enums\AiCapability;
 use Hwkdo\IntranetAppBase\Enums\AiProvider;
 use Hwkdo\IntranetAppBase\Enums\DocumentParseEngine;
 use Hwkdo\IntranetAppBewerbungen\Data\AnalyseOverrides;
@@ -562,7 +564,6 @@ new class extends Component
      */
     private function standardVariante(): array
     {
-        $settings = IntranetAppBewerbungenSettings::resolvedAppSettings();
         $engine = DocumentParseEngine::LlamaParse->value;
         $tier = 'agentic';
 
@@ -574,13 +575,15 @@ new class extends Component
             // App-Standard bleibt der Fallback, der Test lässt sich trotzdem starten.
         }
 
+        $resolved = app(AiConfigResolverInterface::class)->resolve('bewerbungen', AiCapability::Agent);
+
         return [
             '_uid' => (string) Str::uuid(),
             'name' => 'A',
             'engine' => $engine,
             'tier' => $tier,
-            'provider' => ($settings->textProviderOverride() ?? AiProvider::GemmaLlamaCpp)->value,
-            'modell' => (string) ($settings->textModelOverride() ?? ''),
+            'provider' => $resolved->provider->value,
+            'modell' => (string) ($resolved->model ?? ''),
             'ohneCache' => false,
         ];
     }

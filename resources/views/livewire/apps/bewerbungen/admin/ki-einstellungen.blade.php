@@ -2,6 +2,7 @@
 
 use Flux\Flux;
 use Hwkdo\IntranetAppBase\Contracts\AiConfigResolverInterface;
+use Hwkdo\IntranetAppBase\Contracts\IntranetBaseAiConfigSourceInterface;
 use Hwkdo\IntranetAppBase\Enums\AiCapability;
 use Hwkdo\IntranetAppBase\Enums\AiProvider;
 use Hwkdo\IntranetAppBewerbungen\Data\AppSettings;
@@ -19,32 +20,30 @@ new class extends Component
     public function mount(): void
     {
         $settings = IntranetAppBewerbungenSettings::resolvedAppSettings();
-        $provider = $settings->aiTextProviderOverride
-            ?? $settings->textProviderOverride()
-            ?? AiProvider::Bifrost;
 
-        $this->provider = $provider->value;
+        $this->provider = $settings->aiTextProviderOverride?->value ?? '';
         $this->model = is_string($settings->aiTextModelOverride) ? trim($settings->aiTextModelOverride) : '';
     }
 
     public function save(): void
     {
         $this->validate([
-            'provider' => ['required', 'string', Rule::enum(AiProvider::class)],
+            'provider' => ['nullable', 'string', Rule::enum(AiProvider::class)],
             'model' => 'nullable|string|max:150',
         ]);
 
         $current = IntranetAppBewerbungenSettings::resolvedAppSettings();
+        $provider = trim((string) $this->provider);
         $model = trim($this->model);
 
         $settings = AppSettings::from(array_merge($current->toArray(), [
-            'aiTextProviderOverride' => AiProvider::from($this->provider),
+            'aiTextProviderOverride' => $provider === '' ? null : AiProvider::from($provider),
             'aiTextModelOverride' => $model === '' ? null : $model,
         ]));
 
         IntranetAppBewerbungenSettings::persistAppSettings($settings);
 
-        unset($this->effectiveSummary, $this->providerDefaultModel);
+        unset($this->effectiveSummary, $this->baseSummary, $this->modelHint);
 
         Flux::toast(
             heading: 'Gespeichert',
@@ -66,14 +65,12 @@ new class extends Component
     }
 
     #[Computed]
-    public function providerDefaultModel(): string
+    public function baseSummary(): string
     {
-        $provider = AiProvider::tryFrom($this->provider);
-        if ($provider === null) {
-            return '';
-        }
+        $base = app(IntranetBaseAiConfigSourceInterface::class);
+        $model = $base->textModel();
 
-        return trim((string) config('ai.providers.'.$provider->value.'.models.text.default', ''));
+        return $base->textProvider()->label().' / '.($model !== null && trim($model) !== '' ? trim($model) : 'Provider-Standard');
     }
 
     #[Computed]
@@ -86,16 +83,36 @@ new class extends Component
 
         return $resolved->provider->label().' / '.$model;
     }
+
+    #[Computed]
+    public function modelHint(): string
+    {
+        if ($this->provider === '') {
+            return 'Leer lassen, dann gelten Provider und Modell aus den Base Settings.';
+        }
+
+        $default = trim((string) config('ai.providers.'.$this->provider.'.models.text.default', ''));
+        $shown = $default !== '' ? $default : 'dem technischen Provider-Standard';
+
+        return 'Leer lassen, dann gilt '.$shown.'. Das ist der technische Standard dieses Providers, nicht das Modell aus den Base Settings.';
+    }
 };
 ?>
 
 <flux:card class="glass-card">
     <flux:heading size="lg" class="mb-2">KI</flux:heading>
     <flux:text class="mb-6 text-sm text-zinc-500">
-        Ein Provider und ein Modell. Die Auswertung verwendet genau diese beiden Werte.
+        Leere Felder übernehmen die globalen Einstellungen unter Manager → Base Settings.
     </flux:text>
 
-    <flux:callout class="mb-6" icon="information-circle">
+    <flux:callout class="mb-4" icon="information-circle">
+        <flux:callout.heading>Base Settings</flux:callout.heading>
+        <flux:callout.text>
+            {{ $this->baseSummary }}
+        </flux:callout.text>
+    </flux:callout>
+
+    <flux:callout class="mb-6" icon="check-circle">
         <flux:callout.heading>Aktuell wirksam</flux:callout.heading>
         <flux:callout.text>
             {{ $this->effectiveSummary }}
@@ -103,7 +120,8 @@ new class extends Component
     </flux:callout>
 
     <form wire:submit="save" class="space-y-4">
-        <flux:select wire:model.live="provider" label="Provider" variant="listbox">
+        <flux:select wire:model.live="provider" label="Provider" variant="listbox" placeholder="Base-Default">
+            <flux:select.option value="">Base-Default</flux:select.option>
             @foreach ($this->providers as $providerOption)
                 <flux:select.option value="{{ $providerOption->value }}" wire:key="bewerbungen-ki-provider-{{ $providerOption->value }}">
                     {{ $providerOption->label() }}
@@ -114,8 +132,8 @@ new class extends Component
         <flux:input
             wire:model="model"
             label="Modell"
-            :placeholder="$this->providerDefaultModel !== '' ? $this->providerDefaultModel : 'Standardmodell des Providers'"
-            description="Leer lassen, dann gilt das Standardmodell des gewählten Providers. Bei Bifrost ist das der Modellname, den das Gateway kennt."
+            placeholder="Leer = Base-Default"
+            :description="$this->modelHint"
         />
 
         <div class="flex justify-end">
