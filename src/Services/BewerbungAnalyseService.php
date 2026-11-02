@@ -45,6 +45,9 @@ class BewerbungAnalyseService
 
     private bool $promptGekuerzt = false;
 
+    /** @var list<string> */
+    private array $extraktionsGruende = [];
+
     private ?AnalyseLaufProtokoll $aktivesProtokoll = null;
 
     public function __construct(
@@ -108,7 +111,10 @@ class BewerbungAnalyseService
         $alleTexte = array_merge($bewerbungTexte, $anhangTexte);
 
         if ($alleTexte === []) {
-            throw new \RuntimeException('Keine lesbaren Dateien. LlamaParse hat keinen verwendbaren Text geliefert.');
+            throw new \RuntimeException(ExtraktionsTextValidator::fehlermeldung(
+                $this->parseConfig?->engine->label() ?? 'Die Extraktion',
+                $this->extraktionsGruende,
+            ));
         }
 
         $this->statusZeile($status, '  <fg=blue>→</> Schritt 4/4: Warte auf KI-Antwort mit '.count($alleTexte).' Dokument(en) …');
@@ -229,9 +235,11 @@ class BewerbungAnalyseService
                     $this->statusZeile($status, '  <fg=green>    ✓</> '.$dateiName.' ('.strlen($text).' Zeichen, für KI verwendet)');
                     $texte[(string) $dateiName] = $text;
                 } else {
+                    $this->extraktionsGruende[] = $bewertung->beschreibung;
                     $this->statusZeile($status, "  <fg=yellow>    ⚠</> {$dateiName} – nicht für KI verwendet (Extraktion unplausibel oder leer)");
                 }
             } catch (\Throwable $e) {
+                $this->extraktionsGruende[] = $e->getMessage();
                 $this->statusZeile($status, "  <fg=red>    ✗</> {$dateiName}: ".$e->getMessage());
                 $protokoll?->dokument([
                     'name' => (string) $dateiName,
@@ -456,6 +464,7 @@ PROMPT;
         $this->visionAufloesung = null;
         $this->extraktionsHinweis = null;
         $this->promptGekuerzt = false;
+        $this->extraktionsGruende = [];
         $this->aktivesProtokoll = $protokoll;
         $this->laufOverrides = $overrides;
         $this->parseErzwungen = false;

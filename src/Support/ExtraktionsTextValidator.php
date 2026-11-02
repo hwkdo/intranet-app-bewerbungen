@@ -6,6 +6,26 @@ namespace Hwkdo\IntranetAppBewerbungen\Support;
 
 final class ExtraktionsTextValidator
 {
+    /**
+     * @param  list<string>  $gruende
+     */
+    public static function fehlermeldung(string $engineLabel, array $gruende): string
+    {
+        $eindeutig = [];
+        foreach ($gruende as $grund) {
+            $grund = trim($grund);
+            if ($grund !== '' && ! in_array($grund, $eindeutig, true)) {
+                $eindeutig[] = $grund;
+            }
+        }
+
+        $detail = $eindeutig === []
+            ? 'Es wurde kein lesbares Dokument verarbeitet.'
+            : implode(' ', array_slice($eindeutig, 0, 3));
+
+        return $engineLabel.' hat keinen verwendbaren Text geliefert. '.$detail;
+    }
+
     public static function bewerten(string $text): ExtraktionsTextBewertung
     {
         $text = trim($text);
