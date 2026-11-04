@@ -17,12 +17,27 @@ new class extends Component
 
     public string $model = '';
 
+    public string $classificationProvider = '';
+
+    public string $classificationModel = '';
+
+    public string $imageProvider = '';
+
+    public string $imageModel = '';
+
+    public string $imageEditModel = '';
+
     public function mount(): void
     {
         $settings = IntranetAppBewerbungenSettings::resolvedAppSettings();
 
         $this->provider = $settings->aiTextProviderOverride?->value ?? '';
         $this->model = is_string($settings->aiTextModelOverride) ? trim($settings->aiTextModelOverride) : '';
+        $this->classificationProvider = $settings->aiClassificationProviderOverride?->value ?? '';
+        $this->classificationModel = $settings->classificationModelOverride() ?? '';
+        $this->imageProvider = $settings->aiImageProviderOverride?->value ?? '';
+        $this->imageModel = $settings->imageModelOverride() ?? '';
+        $this->imageEditModel = $settings->imageEditModelOverride() ?? '';
     }
 
     public function save(): void
@@ -30,15 +45,30 @@ new class extends Component
         $this->validate([
             'provider' => ['nullable', 'string', Rule::enum(AiProvider::class)],
             'model' => 'nullable|string|max:150',
+            'classificationProvider' => ['nullable', 'string', Rule::enum(AiProvider::class)],
+            'classificationModel' => 'nullable|string|max:150',
+            'imageProvider' => ['nullable', 'string', Rule::enum(AiProvider::class)],
+            'imageModel' => 'nullable|string|max:150',
+            'imageEditModel' => 'nullable|string|max:150',
         ]);
 
         $current = IntranetAppBewerbungenSettings::resolvedAppSettings();
         $provider = trim((string) $this->provider);
         $model = trim($this->model);
+        $classificationProvider = trim($this->classificationProvider);
+        $classificationModel = trim($this->classificationModel);
+        $imageProvider = trim($this->imageProvider);
+        $imageModel = trim($this->imageModel);
+        $imageEditModel = trim($this->imageEditModel);
 
         $settings = AppSettings::from(array_merge($current->toArray(), [
             'aiTextProviderOverride' => $provider === '' ? null : AiProvider::from($provider),
             'aiTextModelOverride' => $model === '' ? null : $model,
+            'aiClassificationProviderOverride' => $classificationProvider === '' ? null : AiProvider::from($classificationProvider),
+            'aiClassificationModelOverride' => $classificationModel === '' ? null : $classificationModel,
+            'aiImageProviderOverride' => $imageProvider === '' ? null : AiProvider::from($imageProvider),
+            'aiImageModelOverride' => $imageModel === '' ? null : $imageModel,
+            'aiImageEditModelOverride' => $imageEditModel === '' ? null : $imageEditModel,
         ]));
 
         IntranetAppBewerbungenSettings::persistAppSettings($settings);
@@ -135,6 +165,34 @@ new class extends Component
             placeholder="Leer = Base-Default"
             :description="$this->modelHint"
         />
+
+        <flux:select wire:model="classificationProvider" label="Klassifikation-Provider" variant="listbox" placeholder="Base-Default">
+            <flux:select.option value="">Base-Default</flux:select.option>
+            @foreach ($this->providers as $providerOption)
+                <flux:select.option value="{{ $providerOption->value }}" wire:key="bewerbungen-ki-classification-{{ $providerOption->value }}">
+                    {{ $providerOption->label() }}
+                </flux:select.option>
+            @endforeach
+        </flux:select>
+
+        <flux:input
+            wire:model="classificationModel"
+            label="Klassifikation-Modell"
+            placeholder="Leer = Base-Default"
+        />
+
+        <flux:select wire:model="imageProvider" label="Bild-Provider" variant="listbox" placeholder="Base-Default">
+            <flux:select.option value="">Base-Default</flux:select.option>
+            @foreach (AiProvider::cases() as $providerOption)
+                <flux:select.option value="{{ $providerOption->value }}" wire:key="bewerbungen-ki-image-{{ $providerOption->value }}">
+                    {{ $providerOption->label() }}
+                </flux:select.option>
+            @endforeach
+        </flux:select>
+
+        <flux:input wire:model="imageModel" label="Generate-Modell" placeholder="Leer = Base-Default" />
+
+        <flux:input wire:model="imageEditModel" label="Edit-Modell" placeholder="Leer = Base-Default" />
 
         <div class="flex justify-end">
             <flux:button type="submit" variant="primary">Speichern</flux:button>

@@ -39,8 +39,17 @@ class AppSettings extends BaseAppSettings implements HasAiSettings, HasDocumentP
         #[Description('KI-Bild-Provider überschreiben (leer = Intranet-Base-Default)')]
         public ?AiProvider $aiImageProviderOverride = null,
 
-        #[Description('KI-Bild-Modell überschreiben (leer = Base- bzw. Provider-Default)')]
+        #[Description('KI-Generate-Modell überschreiben (leer = Base- bzw. Provider-Default)')]
         public ?string $aiImageModelOverride = null,
+
+        #[Description('KI-Edit-Modell überschreiben (leer = Base- bzw. Provider-Default)')]
+        public ?string $aiImageEditModelOverride = null,
+
+        #[Description('KI-Klassifikation-Provider überschreiben (leer = Intranet-Base-Default)')]
+        public ?AiProvider $aiClassificationProviderOverride = null,
+
+        #[Description('KI-Klassifikation-Modell überschreiben (leer = Base- bzw. Provider-Default)')]
+        public ?string $aiClassificationModelOverride = null,
 
         #[Description('Aktiviert die Beispiel-Funktionalität')]
         public bool $enableExampleFeature = true,
@@ -92,6 +101,33 @@ class AppSettings extends BaseAppSettings implements HasAiSettings, HasDocumentP
         }
 
         $trimmed = trim($this->aiImageModelOverride);
+
+        return $trimmed === '' ? null : $trimmed;
+    }
+
+    public function imageEditModelOverride(): ?string
+    {
+        if (! is_string($this->aiImageEditModelOverride)) {
+            return null;
+        }
+
+        $trimmed = trim($this->aiImageEditModelOverride);
+
+        return $trimmed === '' ? null : $trimmed;
+    }
+
+    public function classificationProviderOverride(): ?AiProvider
+    {
+        return $this->aiClassificationProviderOverride;
+    }
+
+    public function classificationModelOverride(): ?string
+    {
+        if (! is_string($this->aiClassificationModelOverride)) {
+            return null;
+        }
+
+        $trimmed = trim($this->aiClassificationModelOverride);
 
         return $trimmed === '' ? null : $trimmed;
     }
