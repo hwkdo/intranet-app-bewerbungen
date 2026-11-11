@@ -25,6 +25,8 @@ new class extends Component
 
     public string $imageModel = '';
 
+    public string $imageEditProvider = '';
+
     public string $imageEditModel = '';
 
     public function mount(): void
@@ -37,7 +39,18 @@ new class extends Component
         $this->classificationModel = $settings->classificationModelOverride() ?? '';
         $this->imageProvider = $settings->aiImageProviderOverride?->value ?? '';
         $this->imageModel = $settings->imageModelOverride() ?? '';
+        $this->imageEditProvider = $settings->aiImageEditProviderOverride?->value ?? '';
         $this->imageEditModel = $settings->imageEditModelOverride() ?? '';
+    }
+
+    public function updatedImageProvider(): void
+    {
+        $this->imageModel = '';
+    }
+
+    public function updatedImageEditProvider(): void
+    {
+        $this->imageEditModel = '';
     }
 
     public function save(): void
@@ -49,6 +62,7 @@ new class extends Component
             'classificationModel' => 'nullable|string|max:150',
             'imageProvider' => ['nullable', 'string', Rule::enum(AiProvider::class)],
             'imageModel' => 'nullable|string|max:150',
+            'imageEditProvider' => ['nullable', 'string', Rule::enum(AiProvider::class)],
             'imageEditModel' => 'nullable|string|max:150',
         ]);
 
@@ -59,6 +73,7 @@ new class extends Component
         $classificationModel = trim($this->classificationModel);
         $imageProvider = trim($this->imageProvider);
         $imageModel = trim($this->imageModel);
+        $imageEditProvider = trim($this->imageEditProvider);
         $imageEditModel = trim($this->imageEditModel);
 
         $settings = AppSettings::from(array_merge($current->toArray(), [
@@ -68,6 +83,7 @@ new class extends Component
             'aiClassificationModelOverride' => $classificationModel === '' ? null : $classificationModel,
             'aiImageProviderOverride' => $imageProvider === '' ? null : AiProvider::from($imageProvider),
             'aiImageModelOverride' => $imageModel === '' ? null : $imageModel,
+            'aiImageEditProviderOverride' => $imageEditProvider === '' ? null : AiProvider::from($imageEditProvider),
             'aiImageEditModelOverride' => $imageEditModel === '' ? null : $imageEditModel,
         ]));
 
@@ -181,7 +197,7 @@ new class extends Component
             placeholder="Leer = Base-Default"
         />
 
-        <flux:select wire:model="imageProvider" label="Bild-Provider" variant="listbox" placeholder="Base-Default">
+        <flux:select wire:model.live="imageProvider" label="Generate-Provider" variant="listbox" placeholder="Base-Default">
             <flux:select.option value="">Base-Default</flux:select.option>
             @foreach (AiProvider::cases() as $providerOption)
                 <flux:select.option value="{{ $providerOption->value }}" wire:key="bewerbungen-ki-image-{{ $providerOption->value }}">
@@ -191,6 +207,15 @@ new class extends Component
         </flux:select>
 
         <flux:input wire:model="imageModel" label="Generate-Modell" placeholder="Leer = Base-Default" />
+
+        <flux:select wire:model.live="imageEditProvider" label="Edit-Provider" variant="listbox" placeholder="Base-Default">
+            <flux:select.option value="">Base-Default</flux:select.option>
+            @foreach (AiProvider::cases() as $providerOption)
+                <flux:select.option value="{{ $providerOption->value }}" wire:key="bewerbungen-ki-image-edit-{{ $providerOption->value }}">
+                    {{ $providerOption->label() }}
+                </flux:select.option>
+            @endforeach
+        </flux:select>
 
         <flux:input wire:model="imageEditModel" label="Edit-Modell" placeholder="Leer = Base-Default" />
 

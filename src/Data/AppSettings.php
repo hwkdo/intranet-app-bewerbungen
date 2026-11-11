@@ -36,11 +36,14 @@ class AppSettings extends BaseAppSettings implements HasAiSettings, HasDocumentP
         #[Description('KI-Text-Modell überschreiben (leer = Base- bzw. Provider-Default)')]
         public ?string $aiTextModelOverride = null,
 
-        #[Description('KI-Bild-Provider überschreiben (leer = Intranet-Base-Default)')]
+        #[Description('KI-Generate-Provider überschreiben (leer = Intranet-Base-Default)')]
         public ?AiProvider $aiImageProviderOverride = null,
 
         #[Description('KI-Generate-Modell überschreiben (leer = Base- bzw. Provider-Default)')]
         public ?string $aiImageModelOverride = null,
+
+        #[Description('KI-Edit-Provider überschreiben (leer = Intranet-Base-Default)')]
+        public ?AiProvider $aiImageEditProviderOverride = null,
 
         #[Description('KI-Edit-Modell überschreiben (leer = Base- bzw. Provider-Default)')]
         public ?string $aiImageEditModelOverride = null,
@@ -103,6 +106,11 @@ class AppSettings extends BaseAppSettings implements HasAiSettings, HasDocumentP
         $trimmed = trim($this->aiImageModelOverride);
 
         return $trimmed === '' ? null : $trimmed;
+    }
+
+    public function imageEditProviderOverride(): ?AiProvider
+    {
+        return $this->aiImageEditProviderOverride;
     }
 
     public function imageEditModelOverride(): ?string
